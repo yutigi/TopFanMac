@@ -1,0 +1,14 @@
+[package]
+name = "smc"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "IOKit access to Apple SMC fan control and HID thermal sensors"
+
+[dependencies]
+serde = { workspace = true }
+
+[[bin]]
+name = "smc-probe"
+path = "src/bin/probe.rs"

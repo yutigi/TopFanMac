@@ -1,0 +1,13 @@
+[package]
+name = "menubar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Status-bar UI for TopFanMac"
+
+[dependencies]
+fand = { path = "../fand" }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+smc = { workspace = true }

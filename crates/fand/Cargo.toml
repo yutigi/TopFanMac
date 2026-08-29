@@ -1,0 +1,21 @@
+[package]
+name = "fand"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Privileged fan control daemon"
+
+[lib]
+name = "fand"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fand"
+path = "src/main.rs"
+
+[dependencies]
+smc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }

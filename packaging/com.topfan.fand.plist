@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.topfan.fand</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <!-- Update to the installed path; /usr/local/libexec is conventional. -->
+    <string>/usr/local/libexec/fand</string>
+    <string>managed</string>
+  </array>
+
+  <!-- Safety invariant 1. KeepAlive is the real guarantee that fans return to
+       a sane state: Drop does not run on SIGKILL, but launchd will restart the
+       daemon, and fand restores auto mode on startup before anything else. -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+
+  <key>ProcessType</key>
+  <string>Interactive</string>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/topfan.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/topfan.log</string>
+</dict>
+</plist>
