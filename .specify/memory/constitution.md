@@ -1,50 +1,64 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# TopFanMac Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Auto is the fallback, always
+Every exit path — normal exit, signal, crash, SIGKILL, sleep/wake, uninstall —
+must leave fans in SMC-managed auto mode (`F0Md = 0`). `Drop` does not run on
+`SIGKILL`, so the guarantee is structural: `KeepAlive` in the launchd plist PLUS
+`restore_all_to_auto()` on *startup* before any other action. Signal handlers
+are convenience, never the guarantee.
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### II. Only raise, never lower
+This tool cools harder than macOS would, never less. Any driven target must be
+clamped to at least the fan's current actual RPM. No feature may introduce a
+downward write except an explicit, deliberate hand-back to auto (`off`).
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### III. Bounds come from the hardware
+Fan minimum/maximum RPM are read per fan from `F0Mn`/`F0Mx`. The two fans on
+this machine have different ranges; hard-coding bounds or sharing one fan's
+bounds with the other is a defect.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### IV. Fans only; a pure governor; single-threaded daemon
+- Never touch thermal throttling, power limits, or anything beyond fan keys.
+- All control policy lives in the pure `fand::governor` (no IOKit, no root, no
+  clock) and is tested off-device against `MockFans`. New policy goes in the
+  governor, never in `daemon.rs`.
+- The daemon is single-threaded on purpose: clients handled inline with a
+  250 ms timeout, far under the 1 s tick. Do not introduce threads/tasks that
+  force `Sync` onto raw IOKit handles.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### V. Minimal unsafe, verified at the boundary
+`unsafe` is confined to `crates/smc` except two documented exceptions in
+`fand` (`signals.rs` handlers, `daemon.rs::peer_is_root` via `getpeereid`).
+Hardware behaviour that cannot be tested here is proven by deliberate,
+observed, one-at-a-time runs (`smc-probe`, first `sudo topfan full`) — never
+incidentally.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+### VI. Honest status, no silent failure
+`status` reflects hardware truth as-is (including the OS's own forced mode
+under load). Any failure to control fans is surfaced (`fan_control_available`,
+error replies, logs), never swallowed or pretended away.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+## Additional Constraints
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+- Authorisation is by peer uid (`getpeereid`), enforced by the daemon, not by
+  socket file permissions. Socket is 0666 so reads stay unprivileged.
+- SMC selectors and encodings follow the verified facts in `CLAUDE.md` — reads
+  via `IOConnectCallStructMethod(conn, 2, …)`, values `flt ` LE float or `fpe2`
+  depending on the type tag that arrives with each read. `Md=1` on startup
+  usually means macOS is doing its job, not that a daemon crashed.
+- No persistence layer, no config files, no thermal/power APIs unless a
+  ratified amendment says otherwise.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+## Development Workflow
 
-## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
+- `cargo test` (all 23+ tests, no root, no hardware) and
+  `cargo clippy --all-targets -- -D warnings` must pass before any commit is
+  considered done; on-device runs are reserved for the thin FFI layer.
+- Hardware-verification runs are done deliberately: one command, one observed
+  outcome, result recorded in `CLAUDE.md` hardware facts.
+- Every feature spec must state which principle it touches and how its exit
+  paths preserve principle I.
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
-
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-08-30 | **Last Amended**: 2026-08-30
