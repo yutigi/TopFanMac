@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TopFan — Menu Bar &amp; Dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ground: #0d141b;
+    --panel: #16212c;
+    --panel-2: #1b2836;
+    --line: #27394a;
+    --line-soft: #1e2d3c;
+    --ink: #dfe9f2;
+    --muted: #8fa5b8;
+    --faint: #5a7085;
+    --cool: #5cc8e8;
+    --cool-dim: #33707f;
+    --hot: #f2a25c;
+    --window: #1d242e;
+    --window-bar: #232b36;
+    --menubar: #16181d;
+    --menu-pop: #1f222a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 48px 28px 96px; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--cool);
+  }
+  h1 {
+    font-size: clamp(28px, 4vw, 42px); font-weight: 700; letter-spacing: -0.015em;
+    line-height: 1.12; text-wrap: balance; margin-top: 10px;
+  }
+  .lede { color: var(--muted); max-width: 62ch; margin-top: 12px; font-size: 16px; }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  section { margin-top: 72px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 8px; }
+  h2 { font-size: 21px; font-weight: 600; letter-spacing: -0.01em; }
+  .prio {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px;
+    color: var(--cool-dim); border: 1px solid var(--line); padding: 2px 8px;
+    border-radius: 3px; letter-spacing: 0.06em;
+  }
+  .sec-note { color: var(--muted); font-size: 14px; max-width: 66ch; margin-bottom: 24px; }
+
+  /* ---------- generic mockup chrome ---------- */
+  .stage { position: relative; }
+  .caption-list { margin-top: 18px; display: grid; gap: 6px; }
+  .caption-list div { display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; color: var(--muted); }
+  .mark {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--cool);
+    border: 1px solid var(--cool-dim); border-radius: 999px;
+    width: 18px; height: 18px; min-width: 18px; display: inline-flex;
+    align-items: center; justify-content: center; transform: translateY(1px);
+  }
+  .mark, .callout { user-select: none; }
+
+  /* ---------- P1: menu bar ---------- */
+  .menubar {
+    background: var(--menubar);
+    border: 1px solid var(--line-soft); border-radius: 8px;
+    height: 44px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 14px; position: relative; font-size: 13px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.35);
+  }
+  .mb-left, .mb-right { display: flex; align-items: center; gap: 18px; }
+  .mb-left { gap: 20px; flex: 1; }
+  .mb-item { color: #c9d2dd; font-size: 13px; }
+  .mb-item.brand { font-weight: 600; }
+  .mb-app { color: #fff; font-weight: 600; font-size: 13px; }
+  .mb-item.active { color: #fff; }
+  .mb-icon { display: inline-block; width: 16px; height: 14px; fill: #c9d2dd; }
+  .mb-item.tf {
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; font-weight: 600;
+    background: #2a2e37; padding: 4px 10px; border-radius: 4px; color: #eaf1f8;
+    font-variant-numeric: tabular-nums; position: relative;
+  }
+  .mb-item.tf .callout { position: absolute; right: -9px; top: -9px; }
+  .callout {
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--cool); color: #06222b; font-family: "IBM Plex Mono", monospace;
+    font-size: 11px; font-weight: 600; display: flex; align-items: center; justify-content: center;
+  }
+  .callout.dim { background: var(--hot); }
+  .tf-pending { color: var(--cool); }
+
+  .menu-pop {
+    position: absolute; right: 6px; top: 50px; width: 250px; z-index: 5;
+    background: var(--menu-pop); border: 1px solid #343a44; border-radius: 7px;
+    padding: 5px; box-shadow: 0 18px 50px rgba(0,0,0,.5); font-size: 13.5px;
+  }
+  .menu-pop .mi {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 10px; border-radius: 4px; color: #e8edf3;
+  }
+  .menu-pop .mi .check { color: #fff; font-weight: 700; width: 16px; }
+  .menu-pop .mi .key { color: #8b96a3; font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+  .menu-pop .mi:hover { background: var(--cool); color: #07252e; }
+  .menu-pop .mi:hover .key { color: #0b3a47; }
+  .menu-pop .sep { height: 1px; background: #363c46; margin: 5px 8px; }
+  .menu-head {
+    padding: 5px 10px 7px; color: #9aa6b2; font-size: 12px;
+    border-bottom: 1px solid #313741; margin-bottom: 4px;
+    font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums;
+  }
+  .caret { text-align: center; color: #363c46; font-size: 12px; margin-top: -4px; }
+  .caret::before { content: "▲"; font-size: 13px; }
+
+  /* ---------- P2: dashboard window ---------- */
+  .duo { display: grid; grid-template-columns: 1fr; gap: 32px; align-items: start; }
+  @media (min-width: 900px) { .duo { grid-template-columns: 1.5fr 1fr; } }
+  .macwin {
+    background: var(--window); border: 1px solid var(--line); border-radius: 11px;
+    overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.45);
+  }
+  .winbar {
+    background: var(--window-bar); height: 40px; display: flex; align-items: center;
+    gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--line-soft);
+  }
+  .tl { width: 12px; height: 12px; border-radius: 50%; }
+  .tl.r { background: #ec6a5e; } .tl.y { background: #f4bf4f; } .tl.g { background: #61c554; }
+  .win-title {
+    flex: 1; text-align: center; color: var(--muted); font-size: 13px; font-weight: 500;
+    padding-right: 42px;
+  }
+  .win-title .mono { font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+
+  .db { padding: 22px; display: grid; gap: 18px; }
+  .db-top { display: grid; gap: 18px; }
+  @media (min-width: 640px) { .db-top { grid-template-columns: 1fr 1.15fr; align-items: stretch; } }
+
+  .temp-block {
+    background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 9px;
+    padding: 16px 18px; display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .lbl {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--faint);
+  }
+  .temp-row { display: flex; align-items: baseline; gap: 10px; margin-top: 8px; }
+  .temp-val {
+    font-family: "IBM Plex Mono", monospace; font-size: 52px; font-weight: 600;
+    letter-spacing: -0.03em; font-variant-numeric: tabular-nums; line-height: 1;
+    transition: color .6s;
+  }
+  .temp-unit { font-family: "IBM Plex Mono", monospace; font-size: 15px; color: var(--muted); }
+  .spark { margin-top: 12px; display: block; width: 100%; height: 54px; }
+  .mode-tag {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 10px;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+    border: 1px solid var(--cool-dim); color: var(--cool); border-radius: 4px;
+    padding: 3px 8px; letter-spacing: 0.05em; text-transform: uppercase;
+    transition: all .5s;
+  }
+  .mode-tag .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cool); }
+
+  .fans { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .fan {
+    background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 9px;
+    padding: 14px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .gauge { width: 104px; height: 62px; }
+  .fan-rpm {
+    font-family: "IBM Plex Mono", monospace; font-size: 20px; font-weight: 600;
+    font-variant-numeric: tabular-nums; margin-top: -42px; line-height: 1;
+  }
+  .fan-rpm small { display: block; font-size: 10.5px; font-weight: 400; color: var(--faint); margin-top: 3px; letter-spacing: .04em; }
+  .fan-range { font-family: "IBM Plex Mono", monospace; font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  .db-bottom { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button {
+    appearance: none; border: 0; background: transparent; color: var(--muted);
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; padding: 8px 15px;
+    cursor: pointer; border-right: 1px solid var(--line-soft); letter-spacing: .03em;
+    transition: background .15s, color .15s;
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover { background: #223140; color: var(--ink); }
+  .seg button.on { background: var(--cool); color: #07252e; font-weight: 600; }
+  .seg button:focus-visible { outline: 2px solid var(--cool); outline-offset: -2px; }
+  .btn {
+    appearance: none; border: 1px solid var(--line); background: var(--panel-2);
+    color: var(--muted); font-family: "IBM Plex Mono", monospace; font-size: 12px;
+    padding: 8px 14px; border-radius: 7px; cursor: pointer; transition: all .15s; letter-spacing: .02em;
+  }
+  .btn:hover { color: var(--ink); border-color: var(--cool-dim); }
+  .btn:focus-visible { outline: 2px solid var(--cool); outline-offset: 2px; }
+  .btn.active { border-color: var(--hot); color: var(--hot); }
+  .hint { font-size: 12.5px; color: var(--faint); margin-left: auto; font-style: italic; }
+
+  /* annotation side */
+  .notes h3 {
+    font-size: 12px; font-family: "IBM Plex Mono", monospace; text-transform: uppercase;
+    letter-spacing: 0.12em; color: var(--cool); margin-bottom: 10px; font-weight: 600;
+  }
+  .notes ul { list-style: none; display: grid; gap: 10px; }
+  .notes li { display: flex; gap: 10px; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+  .notes li b { color: var(--ink); font-weight: 600; }
+  .notes li .mark { margin-top: 2px; }
+
+  /* ---------- P3: states ---------- */
+  .states { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .state-card { border: 1px solid var(--line-soft); border-radius: 9px; background: var(--panel); overflow: hidden; }
+  .state-card .head {
+    padding: 13px 16px; display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .state-card h4 { font-size: 13.5px; font-weight: 600; font-family: "IBM Plex Mono", monospace; }
+  .chip {
+    font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .08em;
+    padding: 2px 8px; border-radius: 999px; border: 1px solid; text-transform: uppercase;
+  }
+  .chip.live { color: var(--cool); border-color: var(--cool-dim); }
+  .chip.unavail { color: var(--hot); border-color: #7a5a35; }
+  .chip.ro { color: var(--faint); border-color: var(--line); }
+  .state-card .body { padding: 14px 16px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .mini-tf { display: inline-block; background: #2a2e37; border-radius: 4px; padding: 4px 9px;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; color: #eaf1f8; margin-bottom: 10px; font-variant-numeric: tabular-nums; }
+  .mini-tf.warn { color: var(--hot); }
+  .mini-tf.faint { color: var(--faint); }
+  .disabled-demo { margin-top: 6px; display: flex; gap: 6px; opacity: .45; }
+  .disabled-demo span {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; border: 1px solid var(--line);
+    color: var(--muted); padding: 3px 9px; border-radius: 5px;
+  }
+
+  /* ---------- contract table ---------- */
+  .tblwrap { overflow-x: auto; border: 1px solid var(--line-soft); border-radius: 9px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; min-width: 640px; }
+  th {
+    text-align: left; font-family: "IBM Plex Mono", monospace; font-size: 11px;
+    letter-spacing: .1em; text-transform: uppercase; color: var(--faint); font-weight: 500;
+    padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--panel-2);
+  }
+  td { padding: 11px 16px; border-bottom: 1px solid var(--line-soft); color: var(--muted); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { color: var(--ink); white-space: nowrap; }
+  td .mono, .mono { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--cool); }
+
+  footer { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--line-soft);
+    color: var(--faint); font-size: 12.5px; font-family: "IBM Plex Mono", monospace; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">TopFan · Feature 002 · UI design treatment</div>
+    <h1>One app, two surfaces.<br>Always visible; detailed on demand.</h1>
+    <p class="lede">
+      <b>TopFan</b> drives the MacBook&rsquo;s fans harder than macOS would. The UI is
+      deliberately small: an <b>always-present menu-bar item</b> for the glance, a
+      <b>dashboard window</b> for the detail, and every number it shows comes
+      straight from the daemon &mdash; never a guess. Values shown below are this
+      machine&rsquo;s real hardware facts: fan&nbsp;0 spins 2317&ndash;6898&nbsp;RPM,
+      fan&nbsp;1 spins 2502&ndash;7450&nbsp;RPM.
+    </p>
+  </header>
+
+  <!-- ============ P1: MENU BAR ============ -->
+  <section>
+    <div class="sec-head"><span class="prio">P1</span><h2>Menu bar &mdash; the glance</h2></div>
+    <p class="sec-note">
+      A status item pinned to the top of the screen, rendered by the existing
+      (and already-tested) status formatter. Clicking it opens the control menu;
+      the checkmark is the daemon&rsquo;s authoritative state, updated by polling &mdash;
+      never by which item was clicked.
+    </p>
+
+    <div class="stage">
+      <div class="menubar">
+        <div class="mb-left">
+          <svg class="mb-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M11.6 6.8c-.1-.1-.1-.2-.1-.3L9.8 3.7c-.2-.3-.6-.5-.9-.5H7.1c-.4 0-.7.2-.9.5L4.5 6.5c0 .1-.1.2-.1.3v2.4c0 .1 0 .2.1.3l1.7 2.8c.2.3.5.5.9.5h1.8c.4 0 .7-.2.9-.5l1.7-2.8c.1-.1.1-.2.1-.3V6.8zm-1.9 2.6H7.3c-.4 0-.7-.3-.7-.7V7.3c0-.4.3-.7.7-.7h2.4c.4 0 .7.3.7.7v1.4c0 .4-.3.7-.7.7z" opacity="0"/></svg>
+          <svg class="mb-icon" viewBox="0 0 16 14" aria-hidden="true" style="width:14px"><path d="M8 12.5 1.5 6.1a4.4 4.4 0 0 1 0-6.3 4.5 4.5 0 0 1 6.3 0l.2.2.2-.2a4.5 4.5 0 0 1 6.3 0 4.4 4.4 0 0 1 0 6.3L8.7 12.5a1 1 0 0 1-.7.3 1 1 0 0 1-.7-.3z" transform="translate(0 .8)"/></svg>
+          <span class="mb-item brand">Finder</span>
+          <span class="mb-item">File</span>
+          <span class="mb-item active">Edit</span>
+          <span class="mb-item">View</span>
+          <span class="mb-item">Go</span>
+        </div>
+        <div class="mb-right">
+          <svg class="mb-icon" viewBox="0 0 14 12" aria-hidden="true"><path d="M7 10.8a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2zM7 7.4c-1 0-2 .4-2.7 1.1l1 1a2.4 2.4 0 0 1 3.4 0l1-1A3.8 3.8 0 0 0 7 7.4zm0-3.4c-1.9 0-3.7.7-5 2l1 1a5.6 5.6 0 0 1 8 0l1-1a7 7 0 0 0-5-2z" transform="translate(0 -1.2)"/></svg>
+          <svg class="mb-icon" viewBox="0 0 20 12" aria-hidden="true" style="width:20px"><rect x="0.5" y="1.5" width="16" height="9" rx="2.5" fill="none" stroke="#c9d2dd" stroke-width="1"/><rect x="2" y="3" width="11" height="6" rx="1"/><path d="M18 4.5v3c.8-.2 1.4-1 1.4-1.5S18.8 4.7 18 4.5z"/></svg>
+          <span class="mb-item tf"><span class="callout">1</span><span id="tf-title">63&deg;C&nbsp;&nbsp;3300rpm</span></span>
+        </div>
+      </div>
+
+      <div class="menu-pop" role="menu" aria-label="TopFan status menu">
+        <div class="menu-head">top of screen &middot; always present <span id="menu-status" style="float:right">Managed</span></div>
+        <div class="mi" role="menuitem"><span><span class="check" id="ck-auto"></span>Auto</span><span class="key">&#8984;1</span></div>
+        <div class="mi" role="menuitem"><span><span class="check" id="ck-managed">&#10003;</span>Managed</span><span class="key">&#8984;2</span></div>
+        <div class="mi" role="menuitem"><span><span class="check" id="ck-full"></span>Full</span><span class="key">&#8984;3</span></div>
+        <div class="mi" role="menuitem"><span><span class="check" id="ck-off"></span>Off</span><span class="key">&#8984;0</span></div>
+        <div class="sep"></div>
+        <div class="mi" role="menuitem"><span>Open Dashboard</span><span class="key">&#8984;D</span></div>
+        <div class="mi" role="menuitem"><span>Quit TopFan</span><span class="key">&#8984;Q</span></div>
+        <div class="caretip caret"></div>
+      </div>
+    </div>
+
+    <div class="caption-list">
+      <div><span class="mark">1</span><span>Status item title uses the existing <b>render_title</b> format verbatim &mdash; the format and its tests are the contract, unchanged by this feature.</span></div>
+    </div>
+  </section>
+
+  <!-- ============ P2: DASHBOARD ============ -->
+  <section>
+    <div class="sec-head"><span class="prio">P2</span><h2>Dashboard &mdash; the detail</h2></div>
+    <p class="sec-note">
+      The main window, opened from the menu (&#8984;D), by double-clicking the status
+      item, or by launching the app directly. Temperature leads; each fan is drawn
+      against <b>its own</b> reported range &mdash; the two differ, and the UI never
+      pretends otherwise. Everything updates on the 1&ndash;2&nbsp;s poll; mode changes
+      confirm only when the daemon confirms.
+    </p>
+
+    <div class="duo">
+      <div class="macwin">
+        <div class="winbar">
+          <span class="tl r"></span><span class="tl y"></span><span class="tl g"></span>
+          <span class="win-title">TopFan &mdash; <span class="mono" id="win-mode">Managed</span></span>
+        </div>
+        <div class="db">
+          <div class="db-top">
+            <div class="temp-block">
+              <span class="lbl">Hottest die</span>
+              <div class="temp-row">
+                <span class="temp-val" id="temp">63</span><span class="temp-unit">&deg;C</span>
+              </div>
+              <svg class="spark" id="spark" viewBox="0 0 300 54" preserveAspectRatio="none" aria-label="temperature history"></svg>
+              <span class="mode-tag" id="mode-tag"><span class="dot"></span><span id="mode-tag-text">managed &middot; curve</span></span>
+            </div>
+            <div class="fans">
+              <div class="fan" id="fan0">
+                <div class="lbl">Left fan</div>
+                <svg class="gauge" viewBox="0 0 104 62"></svg>
+                <div class="fan-rpm" id="f0rpm">3300<small>rpm</small></div>
+                <div class="fan-range">2317 &ndash; 6898 rpm</div>
+              </div>
+              <div class="fan" id="fan1">
+                <div class="lbl">Right fan</div>
+                <svg class="gauge" viewBox="0 0 104 62"></svg>
+                <div class="fan-rpm" id="f1rpm">3450<small>rpm</small></div>
+                <div class="fan-range">2502 &ndash; 7450 rpm</div>
+              </div>
+            </div>
+          </div>
+          <div class="db-bottom">
+            <div class="seg" role="group" aria-label="fan mode">
+              <button data-mode="auto">Auto</button>
+              <button data-mode="managed" class="on">Managed</button>
+              <button data-mode="full">Full</button>
+              <button data-mode="off">Off</button>
+            </div>
+            <button class="btn" id="load-btn" aria-pressed="false">&#9650; Simulate load</button>
+            <span class="hint">try one &mdash; watch the response, not the click</span>
+          </div>
+        </div>
+      </div>
+
+      <aside class="notes">
+        <h3>Design decisions</h3>
+        <ul>
+          <li><span class="mark">2</span><span><b>Per-fan ranges are printed.</b> The two fans have different bounds; both arcs map duty within each fan&rsquo;s own range (hardware-sourced, never constants).</span></li>
+          <li><span class="mark">3</span><span><b>Semantic color for temperature, not decoration:</b> the accent is ice (cooling); heat turns the readout amber as load rises.</span></li>
+          <li><span class="mark">4</span><span><b>Endpoints emphasized,</b> faint grid behind, area fill beneath the sparkline &mdash; a sensor read, styled like one.</span></li>
+          <li><span class="mark">5</span><span><b>Last-writer-wins is visible:</b> buttons go pending and confirm from the polled daemon reply &mdash; the same honesty contract as the menu.</span></li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ============ P3: STATES ============ -->
+  <section>
+    <div class="sec-head"><span class="prio">P3</span><h2>Honest states</h2></div>
+    <p class="sec-note">
+      Three renderings, chosen by a pure function of the polled status. No modal
+      errors, no spinners that never end &mdash; the UI degrades and recovers on its own.
+    </p>
+    <div class="states">
+      <div class="state-card">
+        <div class="head"><h4>Live</h4><span class="chip live">default</span></div>
+        <div class="body">
+          <span class="mini-tf">63&deg;C&nbsp;&nbsp;3300rpm</span><br>
+          Daemon reachable, control verified. Full readout and working mode controls.
+        </div>
+      </div>
+      <div class="state-card">
+        <div class="head"><h4>Unavailable</h4><span class="chip unavail">daemon down</span></div>
+        <div class="body">
+          <span class="mini-tf warn">fand unreachable</span><br>
+          No numbers, no stale data. Menus still open; actions fall back to the CLI hint. Bounded retry &mdash; recovers automatically.
+        </div>
+      </div>
+      <div class="state-card">
+        <div class="head"><h4>Read-only</h4><span class="chip ro">control unavailable</span></div>
+        <div class="body">
+          <span class="mini-tf faint">63&deg;C&nbsp;&nbsp;3300rpm</span><br>
+          Reads still work; the write path is not verified. Live values continue, controls are visibly disabled with a one-line reason.
+          <div class="disabled-demo" aria-hidden="true"><span>Auto</span><span>Managed</span><span>Full</span><span>Off</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CONTRACT ============ -->
+  <section>
+    <div class="sec-head"><span class="prio">SPEC</span><h2>Interaction contract</h2></div>
+    <p class="sec-note">
+      What the mockups above are bound to, from the feature spec &mdash; these are the
+      acceptance points, not aspirations.
+    </p>
+    <div class="tblwrap">
+      <table>
+        <thead><tr><th>Rule</th><th>Spec</th><th>What the UI must do</th></tr></thead>
+        <tbody>
+          <tr><td>One formatter</td><td class="mono">FR-001</td><td>Menu-bar title comes from the shared, tested status format &mdash; identical text in the dashboard header.</td></tr>
+          <tr><td>&#10003; is truth</td><td class="mono">FR-005</td><td>Every surface renders the daemon&rsquo;s reply within one poll (1&ndash;2&nbsp;s); local clicks never tick a checkmark.</td></tr>
+          <tr><td>Elevation</td><td class="mono">FR-003</td><td>Privileged modes use the system admin prompt (once per action); declining leaves state unchanged with a CLI fallback hint.</td></tr>
+          <tr><td>Self-recovery</td><td class="mono">FR-006</td><td>Daemon gone &rarr; Unavailable within one poll; daemon back &rarr; live values, no user action.</td></tr>
+          <tr><td>Single instance</td><td class="mono">FR-008</td><td>Second launch focuses the existing app &mdash; never two status items.</td></tr>
+          <tr><td>Headless logic</td><td class="mono">FR-009</td><td>Formatting, action mapping, and state derivation keep passing their tests with no display server.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    specs/002-desktop-ui-menubar &middot; mock values from the live machine (Mac15,8 &middot; M3 Max &middot; 2 fans) &middot; 2026-08-30
+  </footer>
+</div>
+
+<script>
+(function () {
+  var reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var MIN = 2317, MAX0 = 6898, MIN1 = 2502, MAX1 = 7450;
+  var state = { mode: "managed", temp: 63, load: false, history: [], phase: 0 };
+
+  function dutyFor(t) { // mirrors the governor's spirit: rises fast, cools ahead of the SMC
+    var breakpoints = [[40,.05],[55,.12],[62,.28],[68,.55],[74,.8],[82,1]];
+    for (var i = 1; i < breakpoints.length; i++) {
+      if (t <= breakpoints[i][0]) {
+        var a = breakpoints[i-1], b = breakpoints[i];
+        return a[1] + (b[1]-a[1]) * (t-a[0]) / (b[0]-a[0]);
+      }
+    }
+    return 1;
+  }
+
+  // --- sparkline
+  var spark = document.getElementById("spark");
+  function drawSpark() {
+    var h = state.history, n = h.length;
+    if (h.length < 2) return;
+    var W = 300, H = 54, pad = 4;
+    var min = Math.min.apply(null, h) - 1, max = Math.max.apply(null, h) + 1;
+    var pts = h.map(function (v, i) {
+      var x = pad + (W - 2*pad) * i / (n - 1);
+      var y = H - pad - (H - 2*pad) * (v - min) / (max - min);
+      return [x, y];
+    });
+    var line = pts.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+    var hot = state.temp >= 70;
+    spark.innerHTML =
+      '<line x1="0" y1="'+(H - 14)+'" x2="'+W+'" y2="'+(H - 14)+'" stroke="#1e2d3c" stroke-width="1"/>' +
+      '<line x1="0" y1="'+(H - 30)+'" x2="'+W+'" y2="'+(H - 30)+'" stroke="#1e2d3c" stroke-width="1"/>' +
+      '<polygon points="'+line+'" opacity="0.14" fill="' + (hot ? "#f2a25c" : "#5cc8e8") + '"/>' +
+      '<polyline points="'+line+'" fill="none" stroke="' + (hot ? "#f2a25c" : "#5cc8e8") + '" stroke-width="1.5"/>' +
+      '<circle cx="'+pts[pts.length-1][0]+'" cy="'+pts[pts.length-1][1]+'" r="2.6" fill="'+(hot ? "#f2a25c" : "#5cc8e8")+'"/>';
+  }
+
+  // --- fan gauge (arc 180deg left->right), per-fan bounds
+  function drawGauge(fanEl, rpm, min, max) {
+    var svg = fanEl.querySelector(".gauge");
+    var d = Math.max(0, Math.min(1, (rpm - min) / (max - min)));
+    var r = 40, cx = 52, cy = 52;
+    function pt(p) { // p in 0..1, angle from 180deg to 0deg
+      var a = Math.PI * (1 - p);
+      return (cx + r * Math.cos(a)).toFixed(1) + "," + (cy - r * Math.sin(a)).toFixed(1);
+    }
+    var arc = "M " + pt(0);
+    for (var s = 1; s <= 24; s++) arc += " A " + r + " " + r + " 0 0 1 " + pt(s / 24);
+    var fill = "";
+    if (d > 0.02) {
+      fill = "M " + pt(0);
+      var steps = Math.max(2, Math.round(24 * d));
+      for (var j = 1; j <= steps; j++) fill += " A " + r + " " + r + " 0 0 1 " + pt(j / 24 * d);
+    }
+    var stroke = d > 0.75 ? "#f2a25c" : "#5cc8e8";
+    svg.innerHTML =
+      '<path d="' + arc + '" fill="none" stroke="#1e2d3c" stroke-width="4" stroke-linecap="round"/>' +
+      (fill ? '<path d="' + fill + '" fill="none" stroke="' + stroke + '" stroke-width="4" stroke-linecap="round"/>' : '') +
+      '<circle cx="' + pt(1).split(",")[0] + '" cy="' + pt(1).split(",")[1] + '" r="2.4" fill="#27394a"/>';
+  }
+
+  // --- mode UI sync (menu checkmark + segmented control + titles)
+  var modeText = { auto: "Auto", managed: "Managed", full: "Full", off: "Off" };
+  var modeSub = { auto: "macos &middot; smc curve", managed: "curve &middot; ahead of smc", full: "pinned &middot; both fans", off: "handed back &middot; auto" };
+  var cks = { auto: "ck-auto", managed: "ck-managed", full: "ck-full", off: "ck-off" };
+  function applyMode(mode) {
+    state.mode = mode;
+    document.getElementById("win-mode").textContent = modeText[mode];
+    document.getElementById("menu-status").textContent = modeText[mode];
+    document.getElementById("mode-tag-text").textContent = modeSub[mode];
+    for (var k in cks) document.getElementById(cks[k]).textContent = k === mode ? "✓" : "";
+    document.querySelectorAll(".seg button").forEach(function (b) {
+      b.classList.toggle("on", b.dataset.mode === mode);
+    });
+  }
+
+  // pending -> confirmed from "daemon"
+  document.querySelectorAll(".seg button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var m = b.dataset.mode;
+      if (m === state.mode || b.disabled) return;
+      b.textContent = "…";
+      document.querySelectorAll(".seg button").forEach(function (x) { x.disabled = true; });
+      setTimeout(function () {
+        document.querySelectorAll(".seg button").forEach(function (x) {
+          x.disabled = false;
+          x.textContent = modeText[x.dataset.mode];
+        });
+        applyMode(m);
+      }, 750);
+    });
+  });
+
+  // --- load simulation
+  var btn = document.getElementById("load-btn");
+  btn.addEventListener("click", function () {
+    state.load = !state.load;
+    btn.classList.toggle("active", state.load);
+    btn.setAttribute("aria-pressed", String(state.load));
+    btn.innerHTML = state.load ? "&#9632; Load running" : "&#9650; Simulate load";
+  });
+
+  // --- tick
+  function tick() {
+    state.phase += 1;
+    var drift = Math.sin(state.phase / 7) * 1.5 + Math.sin(state.phase / 23) * 2.5;
+    var target = 63 + drift + (state.load ? 12 : 0);
+    state.temp += (target - state.temp) * 0.25;
+    var t = Math.round(state.temp * 10) / 10;
+    state.history.push(t);
+    if (state.history.length > 60) state.history.shift();
+
+    var duty = dutyFor(state.temp);
+    var jitter0 = 1 + Math.sin(state.phase / 5) * 0.01;
+    var rpm0 = Math.round((MIN + (MAX0 - MIN) * duty) * jitter0 / 10) * 10;
+    var rpm1 = Math.round((MIN1 + (MAX1 - MIN1) * duty) / 10) * 10;
+
+    var el = document.getElementById("temp");
+    el.textContent = Math.round(t);
+    var hot = t >= 70;
+    el.style.color = hot ? "var(--hot)" : "var(--ink)";
+    document.getElementById("tf-title").innerHTML =
+      Math.round(t) + "&deg;C&nbsp;&nbsp;" +
+      (state.mode === "full" ? (state.load ? 6898 : 6200) : rpm0) + "rpm";
+
+    drawSpark();
+    var d0 = state.mode === "full" ? (MAX0 - 200) : rpm0;
+    var d1 = state.mode === "full" ? (MAX1 - 240) : rpm1;
+    drawGauge(document.getElementById("fan0"), d0, MIN, MAX0);
+    drawGauge(document.getElementById("fan1"), d1, MIN1, MAX1);
+    document.getElementById("f0rpm").innerHTML = d0 + "<small>rpm</small>";
+    document.getElementById("f1rpm").innerHTML = d1 + "<small>rpm</small>";
+  }
+
+  for (var i = 0; i < 40; i++) tick();           // prime history
+  applyMode("managed");
+  if (!reduced) setInterval(tick, 1500);
+})();
+</script>
+</body>
+</html>
