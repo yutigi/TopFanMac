@@ -27,7 +27,7 @@ pub enum Response {
     Error { message: String },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Status {
     pub mode: Mode,
     pub hottest_die_c: Option<f32>,

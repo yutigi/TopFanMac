@@ -1,0 +1,390 @@
+<!doctype html>
+<!--
+  TopFan dashboard (T016), adapted from the approved mockup
+  specs/002-desktop-ui-menubar/ui-design.html (P2 panel + P3 state cards).
+
+  Presentation only (research D1/D8): every value comes from one inbound
+  call, `window.topfan.setStatus(json)`, where json is state.rs's
+  SurfaceSnapshot (kind: live | readonly | unavailable). The only outbound
+  messages are `{kind:"mode", value: <verb>}`, handled by the same
+  actions.rs mapping as the menu (T018). Checkmarks/labels confirm from the
+  polled daemon reply, never from a click (FR-005). Fan gauges normalize
+  against each fan's own injected min/max -- no constants (Constitution III).
+  No demo/fixture controls; the sparkline lives per-open only.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TopFan</title>
+<style>
+  /* Dark is the commit; light redefines the same tokens (SC-005). */
+  :root {
+    --ground: #0d141b;
+    --panel: #16212c;
+    --panel-2: #1b2836;
+    --line: #27394a;
+    --line-soft: #1e2d3c;
+    --ink: #dfe9f2;
+    --muted: #8fa5b8;
+    --faint: #5a7085;
+    --cool: #5cc8e8;
+    --cool-dim: #33707f;
+    --hot: #f2a25c;
+    --pending: #5cc8e8;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --ground: #f4f7fa;
+      --panel: #ffffff;
+      --panel-2: #eef3f7;
+      --line: #c9d6e0;
+      --line-soft: #dde7ee;
+      --ink: #1c2a36;
+      --muted: #5d7385;
+      --faint: #8aa0b0;
+      --cool: #0e7f9e;
+      --cool-dim: #7dbecd;
+      --hot: #c46a1d;
+      color-scheme: light;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: -apple-system, "Helvetica Neue", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    user-select: none;
+  }
+  .db { padding: 18px; display: grid; gap: 16px; max-width: 720px; margin: 0 auto; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  /* --- header: the shared render_title text, verbatim (FR-001) --- */
+  .head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    border-bottom: 1px solid var(--line-soft); padding-bottom: 10px;
+  }
+  .head .title {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums;
+    transition: color .6s;
+  }
+  .head .title.hot { color: var(--hot); }
+  .head .state-chip {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px;
+    letter-spacing: .08em; text-transform: uppercase;
+    border: 1px solid var(--cool-dim); color: var(--cool);
+    border-radius: 999px; padding: 2px 9px;
+  }
+  .head .state-chip.ro { color: var(--muted); border-color: var(--line); }
+  .head .state-chip.unavail { color: var(--hot); border-color: var(--hot); }
+
+  /* --- main grid --- */
+  .db-top { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
+  @media (max-width: 560px) { .db-top { grid-template-columns: 1fr; } }
+
+  .temp-block {
+    background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 9px;
+    padding: 14px 16px; display: flex; flex-direction: column;
+  }
+  .lbl {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--faint);
+  }
+  .temp-row { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
+  .temp-val {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 46px;
+    font-weight: 600; letter-spacing: -0.03em; font-variant-numeric: tabular-nums;
+    line-height: 1; transition: color .6s;
+  }
+  .temp-unit { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 14px; color: var(--muted); }
+  .spark { margin-top: 10px; display: block; width: 100%; height: 48px; }
+
+  .fans { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .fan {
+    background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 9px;
+    padding: 12px 8px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  }
+  .gauge { width: 100px; height: 60px; }
+  .fan-rpm {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 18px; font-weight: 600;
+    font-variant-numeric: tabular-nums; margin-top: -40px; line-height: 1;
+  }
+  .fan-rpm small { display: block; font-size: 10px; font-weight: 400; color: var(--faint); margin-top: 3px; }
+  .fan-range {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 10px;
+    color: var(--faint); font-variant-numeric: tabular-nums; margin-top: 14px;
+  }
+
+  /* --- mode controls --- */
+  .db-bottom { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button {
+    appearance: none; border: 0; background: transparent; color: var(--muted);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    padding: 7px 13px; cursor: pointer; border-right: 1px solid var(--line-soft);
+    letter-spacing: .03em; transition: background .15s, color .15s;
+  }
+  .seg button:last-child { border-right: 0; }
+  .seg button:hover:not(:disabled) { background: var(--panel-2); color: var(--ink); }
+  .seg button:focus-visible { outline: 2px solid var(--cool); outline-offset: -2px; }
+  .seg button.on { background: var(--cool); color: var(--ground); font-weight: 600; }
+  .seg button:disabled { opacity: .4; cursor: default; }
+  .seg button.pending { color: var(--cool); font-weight: 600; }
+
+  /* --- the one-line reason/hint (FR-007, research D3) --- */
+  .notice {
+    font-size: 12.5px; color: var(--faint); font-style: italic; margin-left: auto;
+  }
+  /* Unavailable: numbers are gone, replaced by the recovery notice (FR-006). */
+  .unavailable-body { padding: 26px 4px; text-align: center; }
+  .unavailable-body .big {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 16px; font-weight: 600;
+    color: var(--hot); margin-bottom: 8px;
+  }
+  .unavailable-body .sub { color: var(--muted); font-size: 13px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="db">
+  <div class="head">
+    <span class="title" id="title">&nbsp;</span>
+    <span class="state-chip" id="chip">&nbsp;</span>
+  </div>
+
+  <!-- Live / ReadOnly body. Hidden wholesale when Unavailable so no stale
+       number can ever survive a daemon outage (FR-005, FR-006). -->
+  <div id="live-body">
+    <div class="db-top">
+      <div class="temp-block">
+        <span class="lbl">Hottest die</span>
+        <div class="temp-row">
+          <span class="temp-val" id="temp">&ndash;</span><span class="temp-unit">&deg;C</span>
+        </div>
+        <svg class="spark" id="spark" viewBox="0 0 300 48" preserveAspectRatio="none"
+             aria-label="temperature history (this window only)"></svg>
+        <span class="mono" id="duty-row" style="font-size:11px;color:var(--faint);margin-top:8px">
+          duty &ndash;
+        </span>
+      </div>
+      <div class="fans">
+        <div class="fan" id="fan0">
+          <div class="lbl">Left fan</div>
+          <svg class="gauge" viewBox="0 0 100 60"></svg>
+          <div class="fan-rpm" id="f0rpm">&ndash;<small>rpm</small></div>
+          <div class="fan-range" id="f0range">&ndash;</div>
+        </div>
+        <div class="fan" id="fan1">
+          <div class="lbl">Right fan</div>
+          <svg class="gauge" viewBox="0 0 100 60"></svg>
+          <div class="fan-rpm" id="f1rpm">&ndash;<small>rpm</small></div>
+          <div class="fan-range" id="f1range">&ndash;</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Unavailable body: replaces the live body entirely -->
+  <div id="unavailable-body" style="display:none">
+    <div class="unavailable-body">
+      <div class="big">fand unreachable</div>
+      <div class="sub" id="unavailable-hint"></div>
+    </div>
+  </div>
+
+  <div class="db-bottom">
+    <div class="seg" role="group" aria-label="fan mode">
+      <button data-mode="auto">Auto</button>
+      <button data-mode="managed">Managed</button>
+      <button data-mode="full">Full</button>
+      <button data-mode="off">Off</button>
+    </div>
+    <span class="notice" id="notice">&nbsp;</span>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var MODE_LABEL = { auto: "Auto", managed: "Managed", full: "Full", off: "Off" };
+  var SPARK_MAX = 60;         // samples (per-open only)
+  var history = [];           // hottest-die temperatures, this window only
+
+  function dash(el) { el.textContent = "–"; }
+
+  // --- sparkline: per-open history, endpoints emphasized, area fill ---
+  function clearSpark() {
+    history = [];
+    document.getElementById("spark").innerHTML = "";
+  }
+  function drawSpark() {
+    if (history.length < 2) {
+      document.getElementById("spark").innerHTML = "";
+      return;
+    }
+    var W = 300, H = 48, pad = 4, n = history.length;
+    var min = Math.min.apply(null, history) - 1;
+    var max = Math.max.apply(null, history) + 1;
+    var span = Math.max(max - min, 1);
+    var pts = history.map(function (v, i) {
+      var x = pad + (W - 2 * pad) * i / (n - 1);
+      var y = H - pad - (H - 2 * pad) * (v - min) / span;
+      return x.toFixed(1) + "," + y.toFixed(1);
+    });
+    var last = pts[pts.length - 1].split(",");
+    var line = pts.join(" ");
+    // Amber past 70 °C, ice otherwise (mockup note 3: semantic color).
+    var stroke = history[history.length - 1] >= 70 ? "#f2a25c" : "#5cc8e8";
+    document.getElementById("spark").innerHTML =
+      '<polygon points="' + line + '" opacity="0.14" fill="' + stroke + '"/>' +
+      '<polyline points="' + line + '" fill="none" stroke="' + stroke + '" stroke-width="1.5"/>' +
+      '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2.6" fill="' + stroke + '"/>';
+  }
+
+  // --- fan gauge: semicircular arc, duty within THIS fan's range ---
+  function drawGauge(svg, rpm, min, max) {
+    var d = (rpm - min) / (max - min);
+    d = Math.max(0, Math.min(1, d));
+    var r = 40, cx = 50, cy = 50;
+    function pt(p) {
+      var a = Math.PI * (1 - p);
+      return (cx + r * Math.cos(a)).toFixed(1) + "," + (cy - r * Math.sin(a)).toFixed(1);
+    }
+    var arc = "M " + pt(0);
+    for (var s = 1; s <= 24; s++) arc += " A " + r + " " + r + " 0 0 1 " + pt(s / 24);
+    var fill = "";
+    if (d > 0.02) {
+      fill = "M " + pt(0);
+      var steps = Math.max(2, Math.round(24 * d));
+      for (var j = 1; j <= steps; j++) fill += " A " + r + " " + r + " 0 0 1 " + pt(j / 24 * d);
+    }
+    var stroke = d > 0.75 ? "#f2a25c" : "#5cc8e8";
+    svg.innerHTML =
+      '<path d="' + arc + '" fill="none" stroke="var(--line-soft)" stroke-width="4" stroke-linecap="round"/>' +
+      (fill ? '<path d="' + fill + '" fill="none" stroke="' + stroke + '" stroke-width="4" stroke-linecap="round"/>' : "") +
+      '<circle cx="' + pt(1).split(",")[0] + '" cy="' + pt(1).split(",")[1] + '" r="2.4" fill="var(--line)"/>';
+  }
+
+  // --- mode controls: pending affordance, truth from the next setStatus ---
+  var buttons = Array.prototype.slice.call(document.querySelectorAll(".seg button"));
+  function setControls(enabled) {
+    buttons.forEach(function (b) { b.disabled = !enabled; });
+  }
+  function clearPending() {
+    buttons.forEach(function (b) {
+      b.textContent = MODE_LABEL[b.dataset.mode];
+    });
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener("click", function () {
+      if (b.disabled) return;
+      b.textContent = "…"; // pending: confirmation comes from the daemon
+      buttons.forEach(function (x) { if (x !== b) x.disabled = true; });
+      // String body: `{"kind":"mode","value":"<mode>"}` -- the bridge's
+      // single contracted message (parsed safely host-side).
+      window.webkit.messageHandlers.topfan.postMessage(
+        JSON.stringify({ kind: "mode", value: b.dataset.mode })
+      );
+    });
+  });
+
+  // --- one render, one input: the snapshot (state.rs SurfaceSnapshot) ---
+  window.topfan = {
+    setStatus: function (json) {
+      // Accept a JSON string or a plain object (both are valid inbounds).
+      var st;
+      try {
+        st = typeof json === "string" ? JSON.parse(json) : json;
+      } catch (e) {
+        return;
+      }
+
+      // Pending is cleared on every setStatus, whatever it shows: the
+      // labels always follow the daemon, never the click (FR-005).
+      clearPending();
+
+      var chip = document.getElementById("chip");
+      var notice = document.getElementById("notice");
+      var live = document.getElementById("live-body");
+      var unavail = document.getElementById("unavailable-body");
+
+      if (st.kind === "unavailable") {
+        live.style.display = "none";
+        unavail.style.display = "";
+        chip.textContent = "daemon down";
+        chip.className = "state-chip unavail";
+        dash(document.getElementById("title"));
+        document.getElementById("unavailable-hint").textContent = st.hint;
+        notice.textContent = "";
+        clearSpark();
+        return; // no numbers, no stale data
+      }
+
+      live.style.display = "";
+      unavail.style.display = "none";
+      chip.className = "state-chip" + (st.kind === "readonly" ? " ro" : "");
+
+      // Header: the shared render_title text, verbatim (FR-001).
+      var title = document.getElementById("title");
+      title.textContent = st.title;
+      if (st.hottest_die_c !== null && st.hottest_die_c >= 70) {
+        title.classList.add("hot");
+      } else {
+        title.classList.remove("hot");
+      }
+
+      // Temperature + per-open sparkline.
+      var tempEl = document.getElementById("temp");
+      if (st.hottest_die_c === null) {
+        dash(tempEl);
+        clearSpark();
+      } else {
+        tempEl.textContent = Math.round(st.hottest_die_c);
+        history.push(st.hottest_die_c);
+        if (history.length > SPARK_MAX) history.shift();
+        drawSpark();
+      }
+      document.getElementById("duty-row").textContent =
+        "duty " + Math.round(st.duty * 100) + "%";
+
+      // Per-fan gauges against each fan's OWN bounds (Constitution III).
+      var fans = st.fans;
+      var fanIds = ["0", "1"];
+      for (var i = 0; i < fanIds.length; i++) {
+        var f = fans[i];
+        var idx = fanIds[i];
+        var rpm = document.getElementById("f" + idx + "rpm");
+        var range = document.getElementById("f" + idx + "range");
+        var svg = document.querySelector("#fan" + idx + " .gauge");
+        if (f === undefined) {
+          rpm.innerHTML = "&ndash;<small>rpm</small>";
+          range.textContent = "–";
+          svg.innerHTML = "";
+          continue;
+        }
+        rpm.innerHTML = Math.round(f.actual_rpm) + "<small>rpm</small>";
+        range.textContent = Math.round(f.min_rpm) + " – " + Math.round(f.max_rpm) + " rpm";
+        drawGauge(svg, f.actual_rpm, f.min_rpm, f.max_rpm);
+      }
+
+      // Mode labels mirror the daemon; controls enabled only in Live.
+      buttons.forEach(function (b) {
+        b.classList.toggle("on", b.dataset.mode === st.mode);
+      });
+      var enabled = st.kind === "live";
+      buttons.forEach(function (b) { b.disabled = !enabled; });
+
+      // One-line reason in read-only (FR-007); nothing in live.
+      notice.textContent = st.kind === "readonly" ? st.reason : "";
+    }
+  };
+})();
+</script>
+</body>
+</html>

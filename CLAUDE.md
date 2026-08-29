@@ -14,8 +14,7 @@ Three surfaces: a **root daemon** (`fand`) that owns the hardware, an unprivileg
 (`topfan`), and a **menu-bar app**. The daemon is the only thing that touches the SMC.
 
 The parent `FreetimeProjects/CLAUDE.md` describes the surrounding workspace; it is a
-collection of unrelated projects, not a monorepo. `TopFanMac/` is the repo root. Not yet
-a git repo.
+collection of unrelated projects, not a monorepo. `TopFanMac/` is the repo root.
 
 ## Hardware facts (verified on this machine, 2026-08-29)
 
@@ -86,20 +85,57 @@ crates/
     examples/dump.rs   raw key dump for debugging encodings
   fand/      root daemon: governor (pure logic), IPC server, signal handling
   topfan/    unprivileged CLI client
-  menubar/   status-bar app -- HEADLESS STAND-IN, see below
+  menubar/   menu-bar app + desktop dashboard (AppKit via objc2)
+             lib.rs      render_title + run()/headless() + the tests
+             main.rs     thin binary -> menubar::run()
+             client.rs   IPC poll/request against the daemon socket
+             state.rs    PollOutcome -> SurfaceState (Live/ReadOnly/Unavailable)
+                         -> SurfaceSnapshot (the dashboard's JSON wire shape)
+             actions.rs  the menu table: labels, CLI verbs, checkmark mapping
+             delegate.rs osascript -> `topfan <verb>` with admin privileges;
+                         outcome classification, 120 s kill timer
+             ui/mod.rs   NSApplication + NSStatusItem + timers + single-instance
+                         lock socket ($TMPDIR/topfan-ui.lock)
+             ui/menu.rs  NSMenu construction + state-driven update
+             ui/dashboard.rs  NSWindow + WKWebView, one JS bridge
+             assets/dashboard.html  the embedded dashboard page
+src/main.rs   workspace-root shim binary (`topfan-mac`) so plain `cargo run`
+              launches the menu-bar app; `default-members` keeps root-package
+              `cargo build`/`cargo test` covering the whole workspace
 packaging/com.topfan.fand.plist
 ```
 
-`unsafe` outside `crates/smc` is confined to two places in `fand`, both documented at the
-call site: `signals.rs` (installing two handlers) and `daemon.rs::peer_is_root`
-(`getpeereid`). Do not let it spread further — the governor must stay pure.
+`unsafe` outside `crates/smc` is confined to `fand`'s two documented exceptions
+(`signals.rs`, `daemon.rs::peer_is_root`/`getpeereid`) and the menubar's objc2/WebKit
+plumbing (`ui/mod.rs` class definition + `ui/menu.rs` target wiring + `ui/dashboard.rs`
+object init/`evaluateJavaScript`), each documented at the call site. Everything else —
+the governor, the whole menubar logic layer (`state.rs`, `actions.rs`, `delegate.rs`,
+`client.rs`, `render_title`) — is safe and headless-tested. Do not let unsafe spread
+further.
 
-**The menu bar is not built yet.** `crates/menubar` is a working headless client that
-polls the daemon and prints what the status item would show. `render_title` is pure and
-tested. To finish: add `objc2` 0.6.4 + `objc2-app-kit` 0.3.2, make an `NSStatusItem`,
-set its button title from `render_title`, hang an `NSMenu` with Auto/Full/Off items that
-send the same `Request::SetMode`. Keep polling and formatting where they are — only
-presentation should need AppKit.
+**The menu-bar app is built.** By default `menubar` is a real GUI: accessory-policy
+NSApplication (no Dock icon), an NSStatusItem whose title is `render_title` verbatim,
+an NSMenu (Auto/Managed/Full/Off + Open Dashboard + Quit), and a dashboard window
+(NSWindow + WKWebView, page embedded via `include_str!`). `--headless` keeps the
+original poll-and-print loop for scripting. Two deliberate constraints:
+
+- **Presentation only.** All non-presentation logic lives in the pure, headless-tested
+  modules listed above; the AppKit layer renders a `SurfaceState` and forwards clicks
+  into an event queue. The UI never confirms a click locally — the checkmark (menu) and
+  the labels (dashboard) move only on the next poll. Privileged mode changes NEVER touch
+  the SMC from the UI: they spawn
+  `/usr/bin/osascript -e 'do shell script "<topfan> <verb> with administrator privileges"'`
+  on a background thread (120 s kill timer); a declined/failed/missing-`topfan` outcome
+  shows one short hint with the `sudo topfan` fallback and no dialogs or retries.
+- **Honest degradation.** Poll unreachable → Unavailable (no numbers, no stale data,
+  dashboard sparkline cleared); `fan_control_available == false` → read-only (values
+  continue, controls disabled with a one-line reason). Both recover automatically on the
+  next successful poll.
+
+One known deviation: **double-click on the status item does not open the dashboard** —
+the only API path is the deprecated `popUpStatusItemMenu`, and the single-click native
+menu already provides access. Everything is dashboard-openable via the menu item, direct
+launch, or single-instance forward.
 
 ## Architecture notes
 
@@ -122,11 +158,20 @@ and is what an earlier draft got wrong — don't reintroduce it.
 **Authorisation is by peer uid** (`getpeereid`), not by socket permissions. The socket is
 0666 so `status` works without sudo; the daemon rejects `SetMode` from non-root itself.
 
+**The menubar app shares the daemon's thinnest-path discipline.** One target object
+(`TopFanRoot`) is app delegate, menu delegate, timer target, and menu action target;
+background events (delegation results, second-launch forwards) queue into a
+`Mutex<VecDeque>` and are drained by a 250 ms run-loop timer, so AppKit objects are
+never touched off the main thread. UI state lives in `RefCell`s behind
+`MainThreadMarker`-guaranteed access, not in `Sync` types. Single-instance is a lock
+socket at `$TMPDIR/topfan-ui.lock`: a second launch forwards `{"cmd":"open-dashboard"}`,
+waits ≤ 2 s for the ack, and exits — there are never two status items.
+
 ## Commands
 
 ```sh
 cargo build --release
-cargo test                                    # 23 tests, no root, no hardware
+cargo test                                    # 40 tests, no root, no hardware, no GUI
 cargo test -p fand governor                   # just the control policy
 cargo test -p fand does_not_chatter           # a single test
 cargo clippy --all-targets -- -D warnings     # currently clean
@@ -134,6 +179,10 @@ cargo fmt
 
 cargo run --bin smc-probe                     # what can we reach? (safe, read-only)
 cargo run --example dump -p smc               # raw key values + encodings
+
+cargo run                                     # the real menu-bar app (GUI); same as -p menubar
+cargo run -p menubar                          # the real menu-bar app (GUI)
+cargo run -p menubar -- --headless            # poll-and-print loop for scripting
 
 sudo ./target/release/fand managed            # run the daemon in the foreground
 ./target/release/topfan status                # unprivileged

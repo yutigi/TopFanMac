@@ -205,6 +205,13 @@ we're an unbundled binary this round; bundling is a later packaging feature).
 | Concern | Home | Testable headless |
 |---|---|---|
 | Title formatting (`render_title`) | `crates/menubar/src/main.rs` (stays put, per CLAUDE.md) | ✅ existing tests kept passing unchanged |
+
+> **2026-08-30 update**: later, to make plain `cargo run` launch the GUI, the
+> workspace root became a real package with a shim binary that calls
+> `menubar::run()`, which required `menubar` to be lib + thin binary.
+> `render_title`, its tests (byte-identical), and `run()`/`headless()` moved
+> verbatim to `crates/menubar/src/lib.rs`. The intent of this D8 row — don't
+> churn the tested logic while adding the GUI — is preserved.
 | SurfaceState derivation | `state.rs` | ✅ new tests |
 | Action → command mapping, menu structure, checkmark placement | `actions.rs` | ✅ new tests |
 | topfan path lookup, command-line construction, hint text | `delegate.rs` | ✅ new tests (path lookup via injected candidates; no `osascript` execution in tests) |

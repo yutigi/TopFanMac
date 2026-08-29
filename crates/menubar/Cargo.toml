@@ -8,6 +8,31 @@ description = "Status-bar UI for TopFanMac"
 
 [dependencies]
 fand = { path = "../fand" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 smc = { workspace = true }
+
+# GUI (presentation only -- see CLAUDE.md / plan.md D2: non-presentation logic
+# never touches these crates).
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", features = ["NSTimer", "NSRunLoop", "NSGeometry"] }
+objc2-app-kit = { version = "0.3.2", features = [
+    "NSStatusBar",
+    "NSStatusBarButton",
+    "NSStatusItem",
+    "NSMenu",
+    "NSApplication",
+    "NSWindow",
+    "NSResponder",
+    "NSEvent",
+    "NSRunningApplication",
+    "NSMenuItem",
+    "NSControl",
+    "NSScreen",
+    "NSButton",
+    "NSView",
+    "NSUserInterfaceValidation",
+    "NSGraphics",
+] }
+objc2-web-kit = { version = "0.3.2", features = ["WKWebView", "WKScriptMessageHandler", "WKScriptMessage", "WKWebViewConfiguration", "WKUserContentController", "block2", "objc2-app-kit"] }
