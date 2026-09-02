@@ -138,6 +138,16 @@ impl Dashboard {
             )
         };
         window.setTitle(ns_string!("TopFan"));
+        // AppKit's default for a programmatically created window is
+        // `releasedWhenClosed = YES`: the close button *releases* the window.
+        // We also hold it in a `Retained`, so that close would drop the last
+        // real owner and leave this struct pointing at freed memory -- the
+        // reopen path then segfaults (observed: SIGSEGV on close-then-reopen,
+        // quickstart scenario 8). Make the `Retained` the sole owner instead;
+        // closing now only orders the window out.
+        // SAFETY: a plain BOOL setter on a window we just created and still
+        // solely own; it takes no pointer and escapes nothing.
+        unsafe { window.setReleasedWhenClosed(false) };
 
         // Web view + page, with the mode bridge registered under one name.
         // (WebKit APIs are unsafe in objc2-web-kit: the handler/selector
@@ -180,6 +190,14 @@ impl Dashboard {
     /// second launch).
     pub fn show(&self) {
         self.window.makeKeyAndOrderFront(None);
+    }
+
+    /// Whether this window is still on screen. A closed window is ordered out
+    /// but not destroyed (see `setReleasedWhenClosed` above), so the caller
+    /// uses this to tell "already open, just raise it" from "was closed, build
+    /// a fresh one" -- the latter is what keeps history per-open (SC-003).
+    pub fn is_open(&self) -> bool {
+        self.window.isVisible()
     }
 }
 

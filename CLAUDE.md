@@ -137,6 +137,29 @@ the only API path is the deprecated `popUpStatusItemMenu`, and the single-click 
 menu already provides access. Everything is dashboard-openable via the menu item, direct
 launch, or single-instance forward.
 
+### Two traps found during on-device validation (2026-09-02)
+
+> **The poll budget is set by the daemon's shape, not its speed.** `fand` ticks, drains
+> waiting clients with non-blocking `accept`, then sleeps `TICK` (1 s). A client that
+> connects one instant after the drain is not looked at until that sleep ends, so its
+> worst case is a whole `TICK` plus the next tick's sensor work — even though the reply
+> itself costs microseconds. Measured here over 40 polls: median 198 ms, p90 235 ms,
+> max **1071 ms**. Any client timeout at or below `TICK` therefore turns a *healthy*
+> daemon into `Unreachable` on the tail polls, and the surfaces then faithfully render
+> "fand unreachable" — the UI is honest, the input is wrong. A 500 ms budget flapped on
+> 3 of 20 polls. `client::REQUEST_TIMEOUT` is now derived from `daemon::TICK` rather than
+> picked, with tests pinning it above `TICK` and below the 2 s poll cadence.
+
+> **`NSWindow` releases itself when closed.** A window built with
+> `initWithContentRect:…` defaults to `releasedWhenClosed = YES`, so the close button
+> drops a reference the `Retained<NSWindow>` in `Dashboard` still assumes it owns.
+> Close-then-reopen was a use-after-free — **SIGSEGV, exit 139, and no crash report**,
+> which reads like a mysterious silent quit. `dashboard.rs` now calls
+> `setReleasedWhenClosed(false)` so the `Retained` is the sole owner, and
+> `open_dashboard` rebuilds a *closed* dashboard instead of re-showing it (checked via
+> `is_open()`), which is also what makes the page reload and the sparkline restart
+> per-viewing as SC-003 requires.
+
 ## Architecture notes
 
 **The governor is pure and that is deliberate.** `fand::governor` has no IOKit, no root,
@@ -171,7 +194,7 @@ waits ≤ 2 s for the ack, and exits — there are never two status items.
 
 ```sh
 cargo build --release
-cargo test                                    # 40 tests, no root, no hardware, no GUI
+cargo test                                    # 42 tests, no root, no hardware, no GUI
 cargo test -p fand governor                   # just the control policy
 cargo test -p fand does_not_chatter           # a single test
 cargo clippy --all-targets -- -D warnings     # currently clean

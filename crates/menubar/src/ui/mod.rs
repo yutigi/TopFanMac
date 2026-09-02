@@ -255,14 +255,21 @@ impl Root {
     }
 
     /// Dashboard open path (T019): menu item, double-click, direct launch,
-    /// or the single-instance forward all land here. First open creates the
-    /// window with the freshest polled state; later opens just show it.
+    /// or the single-instance forward all land here. An already-open window is
+    /// just raised; a *closed* one is rebuilt rather than re-shown, so the page
+    /// reloads and the sparkline history restarts per viewing (SC-003,
+    /// quickstart scenario 8) instead of carrying over the previous session's.
     fn open_dashboard(&self) {
         let Some(mtm) = MainThreadMarker::new() else {
             return;
         };
         let ivars = self.ivars();
         let mut slot = ivars.dashboard.borrow_mut();
+        let closed = slot.as_ref().is_some_and(|d| !d.is_open());
+        if closed {
+            // Dropping the old `Dashboard` releases its window and web view.
+            *slot = None;
+        }
         if slot.is_none() {
             // The freshest state there is as of this very tick: the last
             // poll's result. A fresh window renders it immediately (SC-003).
