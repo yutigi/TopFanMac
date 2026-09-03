@@ -104,7 +104,15 @@ crates/
 src/main.rs   workspace-root shim binary (`topfan-mac`) so plain `cargo run`
               launches the menu-bar app; `default-members` keeps root-package
               `cargo build`/`cargo test` covering the whole workspace
-packaging/com.topfan.fand.plist
+packaging/  com.topfan.fand.plist   the LaunchDaemon definition
+            Info.plist              app bundle metadata (__VERSION__ substituted)
+            make-app.sh             binaries -> dist/TopFan.app, signs it
+            make-dmg.sh             bundle   -> dist/TopFan-<v>-arm64.dmg
+            install-daemon.sh       installs the root daemon; ships in the app
+            uninstall-daemon.sh     removes it, hands fans back to macOS
+.github/workflows/
+            ci.yml       fmt + clippy + test, and a full .dmg build on every push
+            release.yml  on tag v*: test, build, sign, notarize, gh release create
 ```
 
 `unsafe` outside `crates/smc` is confined to `fand`'s two documented exceptions
@@ -252,7 +260,34 @@ sudo cp packaging/com.topfan.fand.plist /Library/LaunchDaemons/
 sudo launchctl bootstrap system /Library/LaunchDaemons/com.topfan.fand.plist
 sudo launchctl bootout system/com.topfan.fand
 log stream --predicate 'process == "fand"'
+
+./packaging/make-app.sh --version 0.1.0       # -> dist/TopFan.app
+./packaging/make-dmg.sh --version 0.1.0       # -> dist/TopFan-0.1.0-arm64.dmg
+./packaging/install-daemon.sh --dry-run       # resolve paths, change nothing
 ```
+
+## Releasing
+
+Tag-driven. `release.yml` refuses to build when the tag disagrees with the
+`[workspace.package]` version in `Cargo.toml`, so bump that first, commit, then
+tag `v<version>` and push. Signing is additive: with no secrets the workflow
+ad-hoc signs and says so in the release notes; `MACOS_CERT_P12` +
+`MACOS_CERT_PASSWORD` + `MACOS_SIGN_IDENTITY` switch it to Developer ID, and
+`APPLE_ID` + `APPLE_TEAM_ID` + `APPLE_APP_PASSWORD` add notarization.
+
+**The bundle executable is `TopFanMenuBar`, not `TopFan`.** Stock APFS is
+case-insensitive, so a bundle executable named `TopFan` and the bundled CLI
+`Contents/MacOS/topfan` are the same file: the second copy silently clobbers the
+first and the app ships with the CLI as its executable. It signs, verifies, and
+then launches to print clap usage with no status item. `make-app.sh` asserts
+three distinct executables survive the copy and that the bundle executable still
+hashes equal to `menubar`. See `packaging/README.md`.
+
+The `.dmg` deliberately does **not** install the daemon. Drag-install cannot
+write `/Library/LaunchDaemons`, and an app that could install its own root helper
+silently would be a larger capability than this tool needs; until the daemon is
+installed the app degrades to the same read-only surface `state.rs` already shows
+for an unreachable daemon.
 
 ## Testing without cooking the laptop
 

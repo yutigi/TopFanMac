@@ -9,3 +9,5 @@
 .idea/
 .vscode/
 *.swp
+# packaging output
+/dist
