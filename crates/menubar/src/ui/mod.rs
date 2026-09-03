@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::{BufRead as _, Write as _};
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -212,46 +213,40 @@ impl Root {
                 Event::Quit => self.quit(mtm),
                 Event::Mode(action) => self.perform_mode(action),
                 Event::Delegated(outcome, verb) => {
-                    if let Some(hint) = delegate::hint_for(outcome, verb) {
-                        // One short honest hint; state unchanged (FR-005:
-                        // the next poll shows the truth, not this outcome).
-                        *ivars.shared.notice.lock().expect("notice lock") = Some(hint);
-                        self.render_menu();
-                    }
+                    // One short honest hint; state unchanged (FR-005: the next
+                    // poll shows the truth, not this outcome). Assigned
+                    // unconditionally, so a later Applied (hint `None`) clears
+                    // the previous failure line instead of leaving it standing
+                    // over a mode change that did work.
+                    *ivars.shared.notice.lock().expect("notice lock") =
+                        delegate::hint_for(outcome, verb);
+                    self.render_menu();
                 }
             }
         }
     }
 
-    /// Mode change through the single sanctioned path: discover `topfan`,
-    /// then the system admin prompt runs the CLI (FR-003, research D4).
+    /// Mode change, dispatched entirely off the main thread (see
+    /// [`apply_mode`] for the two-step write path). Everything this does on
+    /// the main thread is cheap: the blocking IPC and any admin prompt happen
+    /// on the spawned thread, so the menu closes instantly and the 2 s poll
+    /// keeps rendering while the change is in flight.
     fn perform_mode(&self, action: Action) {
-        let Some(verb) = action.verb() else { return };
-        let ivars = self.ivars();
-
-        // The surfaces only enable actions in Live, but guard here too so a
-        // click racing a degradation can never prompt uselessly.
-        if !self.controllable_now() {
-            return;
-        }
-        let Some(topfan) = delegate::find_topfan(&delegate::default_topfan_candidates()) else {
-            // No prompt: prompting a command that cannot succeed would be
-            // dishonest (Constitution VI).
-            ivars
-                .shared
-                .push(Event::Delegated(Outcome::TopfanMissing, verb));
+        let (Some(mode), Some(verb)) = (action.mode(), action.verb()) else {
             return;
         };
+        let ivars = self.ivars();
+        // Discovery is a couple of `stat`s and is only needed if the daemon
+        // refuses; resolving it here keeps `apply_mode` free of policy.
+        let topfan = delegate::find_topfan(&delegate::default_topfan_candidates());
         let shared = Arc::clone(&ivars.shared);
-        delegate::spawn_delegation(topfan, verb, move |outcome| {
-            shared.push(Event::Delegated(outcome, verb));
-        });
-    }
-
-    /// The guard above: one quick unprivileged read, so a click handler
-    /// does not trust a state that may be up to 2 s stale.
-    fn controllable_now(&self) -> bool {
-        matches!(state::derive(client::poll()), SurfaceState::Live(_))
+        std::thread::Builder::new()
+            .name("topfan-mode".into())
+            .spawn(move || {
+                let outcome = apply_mode(mode, verb, topfan.as_deref());
+                shared.push(Event::Delegated(outcome, verb));
+            })
+            .expect("spawn mode thread");
     }
 
     /// Dashboard open path (T019): menu item, double-click, direct launch,
@@ -294,6 +289,44 @@ impl Root {
     fn quit(&self, mtm: MainThreadMarker) {
         let app = NSApplication::sharedApplication(mtm);
         app.terminate(None);
+    }
+}
+
+/// The write path, in the order that costs the user least (2026-09-03).
+///
+/// 1. **Ask the daemon directly.** Since it authorises the console user as
+///    well as root, the app's own request is normally accepted -- no prompt,
+///    no `osascript`, no `topfan` process. This is the path that runs.
+/// 2. **Only if it refuses on authorization grounds**, raise the system admin
+///    prompt and let the `topfan` CLI do it as root. That happens against a
+///    pre-2026-09-03 root-only daemon, or from a non-console session.
+///
+/// Runs on a background thread; both steps block. The UI confirms nothing
+/// from the return value -- it becomes a hint at most, and the next poll is
+/// the only thing that moves the checkmark (FR-005).
+fn apply_mode(mode: fand::governor::Mode, verb: &'static str, topfan: Option<&Path>) -> Outcome {
+    match client::set_mode(mode) {
+        client::SetMode::Applied => Outcome::Applied,
+        client::SetMode::Refused(why) => {
+            // The surfaces get the generic hint (nothing alarming, no
+            // dialogs); the reason goes to stderr, where `cargo run` and
+            // `log stream` can see it.
+            eprintln!("topfan-ui: mode change refused: {why}");
+            Outcome::Failed
+        }
+        client::SetMode::NeedsElevation => {
+            // A click can race a degradation, and prompting for a command that
+            // cannot succeed would be dishonest (Constitution VI) -- so re-check
+            // against a fresh poll before raising the prompt, not against render
+            // state that may be up to 2 s stale.
+            if !matches!(state::derive(client::poll()), SurfaceState::Live(_)) {
+                return Outcome::Failed;
+            }
+            match topfan {
+                Some(path) => delegate::run(path, verb),
+                None => Outcome::TopfanMissing,
+            }
+        }
     }
 }
 
@@ -423,6 +456,12 @@ pub fn run() {
             sel: sel_menu_action,
         };
         let m = menu::Menu::build(&targets);
+        // The root is also the menu's delegate, so `menuNeedsUpdate:` re-renders
+        // from the last poll as the menu opens. Without this the poll timer is
+        // the only refresh, and NSTimers do not fire during menu tracking -- an
+        // open menu would sit frozen on whatever state preceded the click.
+        let menu_delegate: &ProtocolObject<dyn NSMenuDelegate> = ProtocolObject::from_ref(&*root);
+        m.menu.setDelegate(Some(menu_delegate));
         // Menu attached to the item: single-click opens it natively; the OS
         // draws it against any background (contracts/surfaces.md, SC-005).
         item.setMenu(Some(&m.menu));

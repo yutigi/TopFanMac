@@ -8,7 +8,7 @@ handles a password and never touches the SMC.
 ## Invocation
 
 ```
-/usr/bin/osascript -e 'do shell script "topfan <verb> with administrator privileges"'
+/usr/bin/osascript -e 'do shell script "topfan <verb>" with administrator privileges'
 ```
 
 - `<verb>` ∈ {`auto`, `full`, `off`} per the mapping in

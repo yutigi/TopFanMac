@@ -99,7 +99,7 @@ label→command and authoritative-mode→checkmark placement.
 **Decision**: All four mode commands are executed by the app as:
 
 ```
-/usr/bin/osascript -e 'do shell script "topfan <mode> with administrator privileges"'
+/usr/bin/osascript -e 'do shell script "topfan <mode>" with administrator privileges'
 ```
 
 The admin prompt is system-drawn once per action; we never see a password.

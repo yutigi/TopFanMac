@@ -4,8 +4,11 @@
 //! admin-authorization prompt:
 //!
 //! ```text
-//! /usr/bin/osascript -e 'do shell script "<topfan> <verb> with administrator privileges"'
+//! /usr/bin/osascript -e 'do shell script "<topfan> <verb>" with administrator privileges'
 //! ```
+//!
+//! Note where the quotes end: `with administrator privileges` is a parameter
+//! of `do shell script`, not part of the command it runs.
 //!
 //! The app never sees a password and never touches the SMC. Everything in
 //! this module except `run` is pure and headless-tested; `run` is the small
@@ -40,13 +43,33 @@ pub fn find_topfan(candidates: &[PathBuf]) -> Option<PathBuf> {
         .cloned()
 }
 
+/// Quote one word for the `/bin/sh` that `do shell script` runs, so a path
+/// containing spaces stays a single argument.
+fn sh_quote(word: &str) -> String {
+    format!("'{}'", word.replace('\'', r"'\''"))
+}
+
+/// Wrap a string as an AppleScript `"..."` literal, escaping what AppleScript
+/// treats specially inside one.
+fn as_literal(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', r"\\").replace('"', "\\\""))
+}
+
 /// The single osascript script line for one action. Uses the discovered
 /// binary's full path: `do shell script` runs `/bin/sh`, whose PATH does not
 /// include `/usr/local/bin`, so a bare `topfan` would find nothing.
+///
+/// `with administrator privileges` is a parameter of `do shell script`, so it
+/// must sit **outside** the quoted command. Inside the quotes it is not an
+/// AppleScript clause at all -- it becomes three more argv words handed to
+/// `topfan`, which then runs unelevated, fails argument parsing, and never
+/// raises an authorization prompt. That silent no-op is what this form exists
+/// to prevent; `elevation_clause_is_outside_the_command` pins it.
 pub fn cli_script(topfan: &Path, verb: &str) -> String {
+    let command = format!("{} {verb}", sh_quote(&topfan.display().to_string()));
     format!(
-        "do shell script \"{} {verb} with administrator privileges\"",
-        topfan.display()
+        "do shell script {} with administrator privileges",
+        as_literal(&command)
     )
 }
 
@@ -176,22 +199,6 @@ pub fn run(topfan: &Path, verb: &str) -> Outcome {
     classify(exit_code, &stderr, timed_out)
 }
 
-/// Spawn [`run`] on a background thread, handing the outcome back through
-/// `on_result` (called on that thread). The UI main thread is never blocked.
-pub fn spawn_delegation(
-    topfan: PathBuf,
-    verb: &'static str,
-    on_result: impl FnOnce(Outcome) + Send + 'static,
-) {
-    std::thread::Builder::new()
-        .name("topfan-delegate".into())
-        .spawn(move || {
-            let outcome = run(&topfan, verb);
-            on_result(outcome);
-        })
-        .expect("spawn delegation thread");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,21 +211,67 @@ mod tests {
             [
                 "/usr/bin/osascript",
                 "-e",
-                "do shell script \"/usr/local/bin/topfan full with administrator privileges\""
+                "do shell script \"'/usr/local/bin/topfan' full\" \
+                 with administrator privileges"
             ]
         );
         // The script form embeds exactly one verb and the admin-privileges
         // clause; nothing else is ever run.
         let script = cli_script(Path::new("/usr/local/bin/topfan"), "auto");
         assert!(script.starts_with("do shell script "));
-        assert!(script.ends_with(" with administrator privileges\""));
         assert!(
-            script.contains(" auto "),
+            script.contains(" auto\""),
             "bare verb, no mode words: {script}"
         );
         assert!(
             !script.contains("sudo "),
             "osascript does the elevation, not a shell sudo"
+        );
+    }
+
+    /// The bug this pins (2026-09-03): `with administrator privileges` was
+    /// built *inside* the quoted command, so AppleScript never saw a clause --
+    /// it passed three extra words to `topfan`, which ran as the ordinary user,
+    /// died on argument parsing, and raised no authorization prompt at all.
+    /// Every menu mode click was therefore a silent no-op that only reached the
+    /// surfaces as `Outcome::Failed`.
+    #[test]
+    fn elevation_clause_is_outside_the_command() {
+        for verb in ["off", "auto", "full"] {
+            let script = cli_script(Path::new("/usr/local/bin/topfan"), verb);
+            assert!(
+                script.ends_with("\" with administrator privileges"),
+                "the clause must follow the closing quote: {script}"
+            );
+            // The quoted part is exactly the command: binary + one verb.
+            let command = script
+                .trim_start_matches("do shell script \"")
+                .trim_end_matches("\" with administrator privileges");
+            assert_eq!(command, format!("'/usr/local/bin/topfan' {verb}"));
+            assert!(
+                !command.contains("administrator"),
+                "the clause must not become argv words: {command}"
+            );
+        }
+    }
+
+    /// A path with a space (or a quote) must stay one shell argument, or the
+    /// elevated command silently mis-parses the same way.
+    #[test]
+    fn awkward_paths_stay_a_single_shell_argument() {
+        let script = cli_script(Path::new("/Users/a b/My Tools/topfan"), "full");
+        assert_eq!(
+            script,
+            "do shell script \"'/Users/a b/My Tools/topfan' full\" \
+             with administrator privileges"
+        );
+        // A quote in the path is escaped for sh, and that escape's backslash
+        // is itself escaped for the AppleScript literal -- so osascript hands
+        // sh `'/tmp/it'\''s/topfan'`, which is one argument again.
+        let quoted = cli_script(Path::new("/tmp/it's/topfan"), "off");
+        assert_eq!(
+            quoted,
+            r#"do shell script "'/tmp/it'\\''s/topfan' off" with administrator privileges"#
         );
     }
 

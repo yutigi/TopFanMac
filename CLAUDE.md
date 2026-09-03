@@ -88,12 +88,14 @@ crates/
   menubar/   menu-bar app + desktop dashboard (AppKit via objc2)
              lib.rs      render_title + run()/headless() + the tests
              main.rs     thin binary -> menubar::run()
-             client.rs   IPC poll/request against the daemon socket
+             client.rs   IPC poll/request against the daemon socket; set_mode
+                         (the direct, promptless write path)
              state.rs    PollOutcome -> SurfaceState (Live/ReadOnly/Unavailable)
                          -> SurfaceSnapshot (the dashboard's JSON wire shape)
              actions.rs  the menu table: labels, CLI verbs, checkmark mapping
-             delegate.rs osascript -> `topfan <verb>` with admin privileges;
-                         outcome classification, 120 s kill timer
+             delegate.rs the FALLBACK write path only: osascript -> `topfan
+                         <verb>` with admin privileges; outcome classification,
+                         120 s kill timer
              ui/mod.rs   NSApplication + NSStatusItem + timers + single-instance
                          lock socket ($TMPDIR/topfan-ui.lock)
              ui/menu.rs  NSMenu construction + state-driven update
@@ -122,11 +124,20 @@ original poll-and-print loop for scripting. Two deliberate constraints:
 - **Presentation only.** All non-presentation logic lives in the pure, headless-tested
   modules listed above; the AppKit layer renders a `SurfaceState` and forwards clicks
   into an event queue. The UI never confirms a click locally — the checkmark (menu) and
-  the labels (dashboard) move only on the next poll. Privileged mode changes NEVER touch
-  the SMC from the UI: they spawn
-  `/usr/bin/osascript -e 'do shell script "<topfan> <verb> with administrator privileges"'`
-  on a background thread (120 s kill timer); a declined/failed/missing-`topfan` outcome
-  shows one short hint with the `sudo topfan` fallback and no dialogs or retries.
+  the labels (dashboard) move only on the next poll. Mode changes NEVER touch the SMC from
+  the UI — they go to the daemon, on a background thread, in two steps (`ui::apply_mode`):
+  first a direct `Request::SetMode` down the same socket, which the daemon accepts from the
+  console user, so the normal path raises **no prompt at all**; only if that is refused *on
+  authorization grounds* does it fall back to
+  `/usr/bin/osascript -e 'do shell script "<topfan> <verb>" with administrator privileges'`
+  (120 s kill timer). The fallback is for a pre-2026-09-03 root-only daemon or a non-console
+  session, and is triggered by matching the substring `requires root` in the daemon's
+  refusal — a wire contract pinned on both sides
+  (`client::authorization_refusals_are_recognised_from_either_daemon`,
+  `daemon::refusal_message_keeps_the_substring_the_ui_matches`). A declined/failed/missing-
+  `topfan` outcome shows one short hint with the `sudo topfan` fallback and no dialogs or
+  retries. `Action::mode()` (direct) and `Action::verb()` (fallback) are held in lockstep by
+  `mode_and_verb_agree_for_every_action`.
 - **Honest degradation.** Poll unreachable → Unavailable (no numbers, no stale data,
   dashboard sparkline cleared); `fan_control_available == false` → read-only (values
   continue, controls disabled with a one-line reason). Both recover automatically on the
@@ -137,7 +148,7 @@ the only API path is the deprecated `popUpStatusItemMenu`, and the single-click 
 menu already provides access. Everything is dashboard-openable via the menu item, direct
 launch, or single-instance forward.
 
-### Two traps found during on-device validation (2026-09-02)
+### Traps found during on-device validation
 
 > **The poll budget is set by the daemon's shape, not its speed.** `fand` ticks, drains
 > waiting clients with non-blocking `accept`, then sleeps `TICK` (1 s). A client that
@@ -149,6 +160,17 @@ launch, or single-instance forward.
 > "fand unreachable" — the UI is honest, the input is wrong. A 500 ms budget flapped on
 > 3 of 20 polls. `client::REQUEST_TIMEOUT` is now derived from `daemon::TICK` rather than
 > picked, with tests pinning it above `TICK` and below the 2 s poll cadence.
+
+> **`with administrator privileges` is a `do shell script` parameter, not text.**
+> Written *inside* the quoted command --
+> `do shell script "topfan full with administrator privileges"` -- AppleScript
+> sees no clause at all: it runs `topfan full with administrator privileges` as
+> the ordinary user, so three junk argv words reach clap, `topfan` exits 2, and
+> **no authorization prompt is ever raised**. Every menu mode click was a silent
+> no-op that surfaced only as the generic "mode change failed" hint. The clause
+> must follow the closing quote (2026-09-03). `osacompile` accepts both forms,
+> so syntax-checking does not catch it -- `elevation_clause_is_outside_the_command`
+> in `delegate.rs` does.
 
 > **`NSWindow` releases itself when closed.** A window built with
 > `initWithContentRect:…` defaults to `releasedWhenClosed = YES`, so the close button
@@ -179,7 +201,20 @@ never need to be `Sync`. Reaching for `thread::spawn` per client forces `Sync` o
 and is what an earlier draft got wrong — don't reintroduce it.
 
 **Authorisation is by peer uid** (`getpeereid`), not by socket permissions. The socket is
-0666 so `status` works without sudo; the daemon rejects `SetMode` from non-root itself.
+0666 so `status` works without sudo; the daemon decides `SetMode` itself, accepting **root
+or the console user** — whoever owns `/dev/console`, i.e. the person logged in at the
+physical machine (widened 2026-09-03; it was root-only). With nobody at the console (SSH,
+or the login window) that device belongs to root, so the policy collapses back to
+root-only on its own.
+
+That widening is what lets the menu bar change modes without an admin prompt per click,
+and it is safe *only because* the invariants above hold: a mode change can only ever
+**raise** a fan above what the SMC is already doing, is clamped to the hardware's own
+`F0Mn`/`F0Mx`, and never touches throttling or power limits. The capability handed to a
+local non-root process is therefore bounded by "make the fans loud, or hand them back to
+macOS" — it cannot make the machine run hotter than stock. **If you ever relax invariant
+1 or 2, revisit this policy first.** The pure decision is `daemon::is_authorized`, tested
+by `authorization_policy`.
 
 **The menubar app shares the daemon's thinnest-path discipline.** One target object
 (`TopFanRoot`) is app delegate, menu delegate, timer target, and menu action target;
@@ -194,7 +229,7 @@ waits ≤ 2 s for the ack, and exits — there are never two status items.
 
 ```sh
 cargo build --release
-cargo test                                    # 42 tests, no root, no hardware, no GUI
+cargo test                                    # 48 tests, no root, no hardware, no GUI
 cargo test -p fand governor                   # just the control policy
 cargo test -p fand does_not_chatter           # a single test
 cargo clippy --all-targets -- -D warnings     # currently clean

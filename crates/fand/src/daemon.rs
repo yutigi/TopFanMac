@@ -177,7 +177,7 @@ pub fn run(mode: Mode) -> anyhow::Result<()> {
 fn handle_client(stream: UnixStream, daemon: &Daemon) {
     let _ = stream.set_read_timeout(Some(CLIENT_TIMEOUT));
     let _ = stream.set_write_timeout(Some(CLIENT_TIMEOUT));
-    let peer_is_root = peer_is_root(&stream);
+    let peer_authorized = peer_is_authorized(&stream);
     let mut writer = match stream.try_clone() {
         Ok(w) => w,
         Err(_) => return,
@@ -191,12 +191,16 @@ fn handle_client(stream: UnixStream, daemon: &Daemon) {
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(Request::Status) => Response::Status(Box::new(daemon.status())),
             Ok(Request::SetMode { mode }) => {
-                if peer_is_root {
+                if peer_authorized {
                     daemon.set_mode(mode);
                     Response::Ok
                 } else {
+                    // The substring "requires root" is load-bearing: the
+                    // menu-bar app matches on it to decide when to fall back
+                    // to the admin prompt, and the pre-2026-09-03 daemon's
+                    // wording was exactly `changing mode requires root`.
                     Response::Error {
-                        message: "changing mode requires root".into(),
+                        message: "changing mode requires root or the console user".into(),
                     }
                 }
             }
@@ -215,7 +219,44 @@ fn handle_client(stream: UnixStream, daemon: &Daemon) {
 }
 
 /// Authorise by peer credentials, not by anything the client tells us.
-fn peer_is_root(stream: &UnixStream) -> bool {
+fn peer_is_authorized(stream: &UnixStream) -> bool {
+    match peer_uid(stream) {
+        Some(uid) => is_authorized(uid, console_user()),
+        None => false,
+    }
+}
+
+/// The policy itself, pure so it is testable without a socket or a login
+/// session (`authorization_policy` below).
+///
+/// Root, or the **console user** -- whoever is logged in at the physical
+/// machine. The menu-bar app runs as that user, and this is what lets it
+/// change modes without raising an admin prompt on every click.
+///
+/// Widening past root is safe here only because of the safety invariants the
+/// governor already enforces (see CLAUDE.md): a mode change can only ever
+/// *raise* a fan above what the SMC is already doing, is clamped to the
+/// hardware's own `F0Mn`/`F0Mx`, and never touches thermal throttling or
+/// power limits. So the capability granted to a local non-root process is
+/// bounded by "make the fans loud, or hand them back to macOS" -- it cannot
+/// make the machine run hotter than stock, and it is not an escalation.
+///
+/// With nobody at the console -- a pure SSH session, or the login window --
+/// the console user *is* root, so this collapses back to root-only.
+fn is_authorized(peer_uid: u32, console_uid: Option<u32>) -> bool {
+    peer_uid == 0 || console_uid == Some(peer_uid)
+}
+
+/// Who is logged in at the physical machine. `loginwindow` chowns the console
+/// device to that user at login, which is the cheapest reliable signal and
+/// needs no SystemConfiguration link. `None` if it cannot be read, which
+/// `is_authorized` treats as "no console user" rather than as permission.
+fn console_user() -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/dev/console").ok().map(|m| m.uid())
+}
+
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
     use std::os::unix::io::AsRawFd;
     let mut uid: u32 = u32::MAX;
     let mut gid: u32 = u32::MAX;
@@ -223,7 +264,7 @@ fn peer_is_root(stream: &UnixStream) -> bool {
     // valid socket fd. Confined here rather than in a shared module because it
     // is the only privileged decision the daemon makes.
     let rc = unsafe { getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
-    rc == 0 && uid == 0
+    (rc == 0).then_some(uid)
 }
 
 fn set_socket_permissions(path: &str) {
@@ -239,4 +280,47 @@ fn set_socket_permissions(path: &str) {
 
 extern "C" {
     fn getpeereid(fd: i32, uid: *mut u32, gid: *mut u32) -> i32;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Root always passes, the console user passes, nobody else does -- and
+    /// with no console session the policy is root-only again.
+    #[test]
+    fn authorization_policy() {
+        const ROOT: u32 = 0;
+        const ME: u32 = 501;
+        const OTHER: u32 = 502;
+
+        // Logged in at the machine.
+        assert!(is_authorized(ROOT, Some(ME)), "root is always authorised");
+        assert!(is_authorized(ME, Some(ME)), "the console user may set mode");
+        assert!(
+            !is_authorized(OTHER, Some(ME)),
+            "another local uid must not: the 0666 socket is not the border"
+        );
+
+        // Nobody at the console (SSH-only, or the login window): loginwindow
+        // has not handed the device to anyone, so this is root-only again.
+        assert!(is_authorized(ROOT, Some(ROOT)));
+        assert!(!is_authorized(ME, Some(ROOT)));
+
+        // Unreadable console device is "no console user", never permission.
+        assert!(is_authorized(ROOT, None));
+        assert!(!is_authorized(ME, None));
+        assert!(!is_authorized(OTHER, None));
+    }
+
+    /// The refusal text is a wire contract: the menu-bar app matches the
+    /// substring `requires root` to decide when to fall back to the admin
+    /// prompt, and the older root-only daemon said exactly that. Changing the
+    /// wording past this point silently disables that fallback.
+    #[test]
+    fn refusal_message_keeps_the_substring_the_ui_matches() {
+        let message = "changing mode requires root or the console user";
+        assert!(message.contains("requires root"));
+        assert!("changing mode requires root".contains("requires root"));
+    }
 }

@@ -7,6 +7,7 @@
 //! as unreachable (research D6).
 
 use fand::daemon;
+use fand::governor::Mode;
 use fand::proto::{Request, Response, Status, SOCKET_PATH};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -71,6 +72,43 @@ pub fn poll() -> PollOutcome {
     }
 }
 
+/// Result of asking the daemon to change mode over the socket directly.
+pub enum SetMode {
+    /// The daemon accepted and applied it. No prompt was raised at all.
+    Applied,
+    /// The daemon refused on authorization grounds: this process is neither
+    /// root nor the console user. That is also exactly how a pre-2026-09-03
+    /// root-only daemon answers, which is what the admin-prompt fallback in
+    /// `ui::apply_mode` exists to handle.
+    NeedsElevation,
+    /// Unreachable, or refused for some other reason. The string is the
+    /// reason (logs); the surfaces show the generic failure hint.
+    Refused(String),
+}
+
+/// Ask the daemon to change mode as *this* user. Since 2026-09-03 the daemon
+/// authorises the console user as well as root, so the menu-bar app's own
+/// request is normally accepted and no authorization prompt is needed.
+pub fn set_mode(mode: Mode) -> SetMode {
+    match request(&Request::SetMode { mode }, REQUEST_TIMEOUT) {
+        Ok(Response::Ok) => SetMode::Applied,
+        Ok(Response::Error { message }) if is_authorization_refusal(&message) => {
+            SetMode::NeedsElevation
+        }
+        Ok(Response::Error { message }) => SetMode::Refused(message),
+        Ok(other) => SetMode::Refused(format!("unexpected reply: {other:?}")),
+        Err(e) => SetMode::Refused(format!("{e:#}")),
+    }
+}
+
+/// The daemon's authorization refusal, matched by substring on purpose: the
+/// fallback must recognise both the current wording ("...requires root or the
+/// console user") and the older root-only daemon's ("...requires root"), since
+/// an old daemon is precisely the case the admin prompt still covers.
+fn is_authorization_refusal(message: &str) -> bool {
+    message.contains("requires root")
+}
+
 fn path() -> &'static str {
     SOCKET_PATH
 }
@@ -78,6 +116,20 @@ fn path() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pins the fallback trigger against both daemon vintages. If this stops
+    /// matching, mode changes silently stop working on an old daemon: the
+    /// direct request is refused and the admin prompt is never raised.
+    #[test]
+    fn authorization_refusals_are_recognised_from_either_daemon() {
+        assert!(is_authorization_refusal(
+            "changing mode requires root or the console user"
+        ));
+        assert!(is_authorization_refusal("changing mode requires root"));
+        // Anything else is a real failure, not a reason to prompt.
+        assert!(!is_authorization_refusal("bad request: expected value"));
+        assert!(!is_authorization_refusal(""));
+    }
 
     /// The bug this pins: a request budget at or below the daemon's tick period
     /// makes a *healthy* daemon look unreachable, because a client that misses

@@ -44,6 +44,23 @@ impl Action {
         }
     }
 
+    /// The daemon `Mode` this action *asks for*, for the direct socket path.
+    ///
+    /// Distinct from [`Action::state_item`]: `Off` asks for `Mode::Auto` (hand
+    /// the fans back to macOS) but never carries the checkmark, which is the
+    /// same "two labels, one hand-back intent" as [`Action::verb`] (research
+    /// D3). Kept in lockstep with `verb` by `mode_and_verb_agree` below, so the
+    /// direct path and the admin-prompt fallback can never ask for different
+    /// things.
+    pub fn mode(self) -> Option<Mode> {
+        match self {
+            Action::Auto | Action::Off => Some(Mode::Auto),
+            Action::Managed => Some(Mode::Managed),
+            Action::Full => Some(Mode::Full),
+            Action::OpenDashboard | Action::Quit => None,
+        }
+    }
+
     /// Which daemon `Mode` this item reflects-checkmarks when polled.
     /// "Off" is an action phrasing of the hand-back, never checkmarked.
     pub fn state_item(self) -> Option<Mode> {
@@ -124,6 +141,34 @@ mod tests {
         // Non-mode items map to local actions, not commands.
         assert_eq!(Action::OpenDashboard.verb(), None);
         assert_eq!(Action::Quit.verb(), None);
+    }
+
+    /// The two write paths must ask for the same thing. `mode()` goes straight
+    /// down the socket; `verb()` goes through `topfan` under the admin prompt
+    /// when the daemon refuses. A drift between them would make the fallback
+    /// apply a *different* mode than the click asked for.
+    #[test]
+    fn mode_and_verb_agree_for_every_action() {
+        // The mapping `topfan` itself uses (topfan/src/main.rs).
+        fn verb_mode(verb: &str) -> Mode {
+            match verb {
+                "off" => Mode::Auto,
+                "auto" => Mode::Managed,
+                "full" => Mode::Full,
+                other => panic!("unknown verb {other}"),
+            }
+        }
+        for action in MENU {
+            match (action.mode(), action.verb()) {
+                (Some(mode), Some(verb)) => assert_eq!(
+                    mode,
+                    verb_mode(verb),
+                    "{action:?}: direct path and CLI fallback disagree"
+                ),
+                (None, None) => {} // local actions: neither path
+                (m, v) => panic!("{action:?} has mode {m:?} but verb {v:?}"),
+            }
+        }
     }
 
     #[test]
