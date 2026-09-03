@@ -1,5 +1,7 @@
 # TopFan
 
+[![CI](https://github.com/yutigi/TopFanMac/actions/workflows/ci.yml/badge.svg)](https://github.com/yutigi/TopFanMac/actions/workflows/ci.yml)
+
 ![TopFan — drive the fans ahead of the curve: menu-bar item and dashboard showing die temperature, per-fan RPM, and the Auto/Managed/Full/Off controls](assets/banner.png)
 
 Fan control for Apple Silicon MacBooks, in Rust. TopFan drives the fans ahead of
@@ -43,6 +45,31 @@ giving control back:
 > verified against hardware. Run `sudo topfan full` the first time
 > deliberately, watching `topfan status`.
 
+## Install
+
+Download the latest `TopFan-<version>-arm64.dmg` from
+[Releases](https://github.com/yutigi/TopFanMac/releases), open it, and drag
+**TopFan.app** onto **Applications**. Then install the fan-control daemon:
+
+```sh
+sudo /Applications/TopFan.app/Contents/Resources/install-daemon.sh
+```
+
+That second step is the one that enables fan control, because only the root
+daemon is allowed to touch the SMC. Without it the app still runs and shows
+live temperature and fan RPM, but the Auto/Managed/Full/Off controls stay
+disabled — the app degrades to read-only rather than showing stale numbers.
+
+Releases are not signed with an Apple Developer ID yet, so macOS will say the
+developer cannot be verified. Right-click the app and choose Open, or:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/TopFan.app
+```
+
+To uninstall, run `sudo /Applications/TopFan.app/Contents/Resources/uninstall-daemon.sh`
+and drag the app to the Trash. Uninstalling hands the fans back to macOS.
+
 ## Building
 
 Requires Rust 1.80+ (see `rust-toolchain.toml`). macOS only — the code uses
@@ -50,7 +77,15 @@ IOKit FFI directly, with no third-party SMC library.
 
 ```sh
 cargo build --release
-cargo test          # 40 tests, no root, no hardware, no GUI
+cargo test          # 48 tests, no root, no hardware, no GUI
+```
+
+To build the installer locally, exactly as CI does:
+
+```sh
+cargo build --release
+./packaging/make-app.sh --version 0.1.0     # -> dist/TopFan.app
+./packaging/make-dmg.sh --version 0.1.0     # -> dist/TopFan-0.1.0-arm64.dmg
 ```
 
 ## Usage

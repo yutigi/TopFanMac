@@ -1,0 +1,195 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: build and publish .dmg
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          # The tag and the workspace version must agree, or the .dmg filename
+          # and the version inside Info.plist would disagree with the release.
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::tag $TAG implies version $VERSION but Cargo.toml says $CARGO_VERSION."
+            echo "::error::Bump [workspace.package] version in Cargo.toml, commit, then retag."
+            exit 1
+          fi
+          echo "tag=$TAG"         >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (version $VERSION)"
+
+      # A release must not ship code that fails the same gates CI enforces.
+      - name: Test
+        run: cargo test
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      # Signing is optional. Without an Apple Developer ID the .dmg is built
+      # ad-hoc signed and users clear quarantine by hand; adding the secrets
+      # below upgrades the same pipeline to Developer ID + notarization with
+      # no other change.
+      - name: Import signing certificate
+        id: signing
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MACOS_CERT_P12:-}" ] || [ -z "${MACOS_SIGN_IDENTITY:-}" ]; then
+            echo "No signing secrets set -- building an ad-hoc signed .dmg."
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "identity=$MACOS_SIGN_IDENTITY" >> "$GITHUB_OUTPUT"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble app bundle
+        run: |
+          ./packaging/make-app.sh \
+            --version "${{ steps.version.outputs.version }}" \
+            --sign "${{ steps.signing.outputs.identity }}"
+
+      - name: Build disk image
+        run: |
+          ./packaging/make-dmg.sh --version "${{ steps.version.outputs.version }}"
+
+      - name: Notarize and staple
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_PASSWORD:-}" ]; then
+            echo "::warning::Signed but not notarized -- APPLE_ID/APPLE_APP_PASSWORD not set."
+            exit 0
+          fi
+          DMG="dist/TopFan-${{ steps.version.outputs.version }}-arm64.dmg"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+
+      - name: Verify the artifact
+        run: |
+          set -euo pipefail
+          DMG="dist/TopFan-${{ steps.version.outputs.version }}-arm64.dmg"
+          MNT="$(mktemp -d)"
+          hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -quiet
+          test -d "$MNT/TopFan.app"
+          test -L "$MNT/Applications"
+          codesign --verify --strict --verbose=2 "$MNT/TopFan.app"
+          hdiutil detach "$MNT" -quiet
+          cd dist && shasum -a 256 "$(basename "$DMG")" > "$(basename "$DMG").sha256"
+          cat "$(basename "$DMG").sha256"
+
+      - name: Write release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          {
+            echo "## Install"
+            echo
+            echo '1. Download `TopFan-'"$VERSION"'-arm64.dmg` below and open it.'
+            echo '2. Drag **TopFan.app** onto **Applications**.'
+            echo '3. Install the fan-control daemon:'
+            echo
+            echo '   ```sh'
+            echo '   sudo /Applications/TopFan.app/Contents/Resources/install-daemon.sh'
+            echo '   ```'
+            echo
+            echo 'Step 3 is what enables fan control: only the root daemon touches the SMC.'
+            echo 'Without it the app still runs and shows live temperature and RPM, with the'
+            echo 'mode controls disabled.'
+            echo
+            if [ "${{ steps.signing.outputs.signed }}" != "true" ]; then
+              echo '> **This build is not signed with an Apple Developer ID.** macOS will say'
+              echo '> the developer cannot be verified. Right-click TopFan.app and choose Open,'
+              echo '> or clear the quarantine flag:'
+              echo '>'
+              echo '> ```sh'
+              echo '> xattr -dr com.apple.quarantine /Applications/TopFan.app'
+              echo '> ```'
+              echo
+            fi
+            echo '## Uninstall'
+            echo
+            echo '```sh'
+            echo 'sudo /Applications/TopFan.app/Contents/Resources/uninstall-daemon.sh'
+            echo '```'
+            echo
+            echo 'then drag the app to the Trash. Uninstalling hands the fans back to macOS.'
+            echo
+            echo '## Requirements'
+            echo
+            echo 'Apple Silicon Mac, macOS 13 or later. Developed and tested on an M3 Max'
+            echo '(`Mac15,8`); the SMC protocol is untested on Intel Macs.'
+          } > dist/RELEASE_NOTES.md
+          cat dist/RELEASE_NOTES.md
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          # Idempotent: re-running the workflow for a tag replaces the assets
+          # rather than failing on an existing release.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" \
+              "dist/TopFan-$VERSION-arm64.dmg" \
+              "dist/TopFan-$VERSION-arm64.dmg.sha256" --clobber
+          else
+            gh release create "$TAG" \
+              --title "TopFan $VERSION" \
+              --notes-file dist/RELEASE_NOTES.md \
+              "dist/TopFan-$VERSION-arm64.dmg" \
+              "dist/TopFan-$VERSION-arm64.dmg.sha256"
+          fi
+          gh release view "$TAG" --json url --jq .url

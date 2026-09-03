@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    # Apple Silicon runner: the SMC/IOKit code and the objc2 GUI stack are
+    # macOS-only, and the project targets arm64.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          rustup component add rustfmt clippy
+          rustc --version && cargo --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      # No root, no hardware, no GUI: the governor is pure and the menubar
+      # logic layer is headless-tested, so the whole suite runs on a runner.
+      - name: Test
+        run: cargo test
+
+  package:
+    name: build .dmg
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-release-${{ runner.os }}-
+
+      - name: Build release binaries
+        run: cargo build --release
+
+      # Ad-hoc signed, unnotarized: this is a build smoke test, not a
+      # shippable artifact. It exists so packaging breaks show up on the
+      # commit that caused them rather than at tag time.
+      - name: Assemble app bundle
+        run: ./packaging/make-app.sh --version "0.0.0+${GITHUB_SHA:0:7}"
+
+      - name: Build disk image
+        run: ./packaging/make-dmg.sh --version "0.0.0+${GITHUB_SHA:0:7}"
+
+      - name: Verify the artifact
+        run: |
+          set -euo pipefail
+          codesign --verify --strict --verbose=2 dist/TopFan.app
+          ./dist/TopFan.app/Contents/Resources/install-daemon.sh --dry-run
+          MNT="$(mktemp -d)"
+          hdiutil attach dist/*.dmg -mountpoint "$MNT" -nobrowse -quiet
+          test -d "$MNT/TopFan.app"
+          test -L "$MNT/Applications"
+          codesign --verify --strict "$MNT/TopFan.app"
+          hdiutil detach "$MNT" -quiet
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TopFan-dmg-${{ github.sha }}
+          path: dist/*.dmg
+          retention-days: 7
