@@ -1,5 +1,7 @@
 # TopFan
 
+![TopFan — drive the fans ahead of the curve: menu-bar item and dashboard showing die temperature, per-fan RPM, and the Auto/Managed/Full/Off controls](assets/banner.png)
+
 Fan control for Apple Silicon MacBooks, in Rust. TopFan drives the fans ahead of
 macOS's own thermal curve so the machine stays cool under sustained load instead
 of heat-soaking first — and it can pin both fans to maximum on demand.
